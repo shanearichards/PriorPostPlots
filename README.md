@@ -15,8 +15,41 @@ install.packages("rstan")
 The development version of `PriorPostPlots` can be installed from GitHub:
 
 ```r
-install.packages("remotes")
+# install remotes if you don't have it
+if (!requireNamespace("remotes", quietly = TRUE)) install.packages("remotes")
+
+# normal install from GitHub
 remotes::install_github("shanearichards/PriorPostPlots")
+```
+
+Troubleshooting: if RStudio's Help pane shows "Internal Server Error" or a topic is missing after installation, it usually means the installed help database was not built correctly. A simple fix is to restart R, remove the package, and reinstall forcing a rebuild of the package (this regenerates the help database):
+
+```r
+# restart R session (recommended)
+remove.packages("PriorPostPlots")
+if (!requireNamespace("remotes", quietly = TRUE)) install.packages("remotes")
+remotes::install_github("shanearichards/PriorPostPlots", dependencies = TRUE, force = TRUE, build = TRUE)
+```
+
+As a quick temporary workaround you can view any raw Rd directly from the repository and render it locally without reinstalling, for example:
+
+```r
+tmp_rd <- tempfile(fileext = ".Rd")
+download.file("https://raw.githubusercontent.com/shanearichards/PriorPostPlots/master/man/PriorPosteriorPlot.Rd", tmp_rd)
+out <- tempfile(fileext = ".html")
+tools::Rd2HTML(tmp_rd, out)
+browseURL(out)
+```
+
+Developer note: Before pushing releases, regenerate documentation and rebuild the package so man/ and the compiled help DB are up-to-date:
+
+```r
+# from the package source directory
+if (!requireNamespace("devtools", quietly = TRUE)) install.packages("devtools")
+if (!requireNamespace("roxygen2", quietly = TRUE)) install.packages("roxygen2")
+
+devtools::document()
+devtools::check()
 ```
 
 # Overview
