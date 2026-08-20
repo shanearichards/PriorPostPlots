@@ -1,0 +1,22 @@
+Package: PriorPostPlots
+Title: Prior-posterior plots for Stan models
+Version: 0.0.1
+Authors@R: 
+    person(given = "Shane", family = "Richards", email = "shane.richards@utas.edu.au", role = c("aut", "cre"),
+           comment = c(ORCID = "0000-0002-9638-5827"))
+Description: Generates a ggplot comparing prior and posterior distributions by combining sampling output from a Stan model with a data frame specifying the prior distributions for selected model parameters.
+License: MIT + file LICENSE
+Encoding: UTF-8
+Roxygen: list(markdown = TRUE)
+Imports:
+    dplyr,
+    ggplot2 (>= 3.4.0),
+    methods,
+    purrr,
+    rlang,
+    rstan,
+    tibble,
+    tidyr,
+    tidyselect
+Config/roxygen2/version: 8.0.0
+URL: https://github.com/shanearichards/PriorPostPlots
