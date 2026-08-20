@@ -68,5 +68,8 @@ PriorPosteriorPlot(stan_fit, "wounds_2.stan", pars)
 
 # omit pars to plot every parameter Create_df_priors() could identify
 PriorPosteriorPlot(stan_fit, "wounds_2.stan")
+
+# provide the compiled stan object that contains the stan code: stan_model (say)
+PriorPosteriorPlot(stan_fit, stan_code = stan_model, pars)
 }
 }
