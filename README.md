@@ -2,7 +2,15 @@
 
 An R package for comparing prior and posterior distributions of parameters from Stan models.
 
+**Note:** This package is still in development.
+
 ## Installation
+
+Before installing `PriorPostPlots`, ensure you have the `rstan` package installed:
+
+```r
+install.packages("rstan")
+```
 
 The development version of `PriorPostPlots` can be installed from GitHub:
 
@@ -29,6 +37,7 @@ library(PriorPostPlots)
 # See the function documentation for examples
 ?PriorPosteriorPlotStan
 ```
+
 # Author
 
 Shane Richards
