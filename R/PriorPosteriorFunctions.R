@@ -604,7 +604,7 @@ resolve_numeric <- function(x, data_list = NULL, par_name = NULL) {
 #' `matrix[R, C]` parameters, and any hard lower/upper bounds declared on
 #' them.
 #' @keywords internal
-parse_parameters_block <- function(block, data_list = NULL) {
+parse_parameters_block <- function(block, data_list = NULL, pars_filter = NULL) {
   statements <- strsplit(block, ";")[[1]]
   statements <- trimws(gsub("\\s+", " ", statements))
   statements <- statements[statements != ""]
@@ -612,6 +612,34 @@ parse_parameters_block <- function(block, data_list = NULL) {
   unsupported_types <- c("array", "int", "simplex",
     "ordered", "positive_ordered", "row_vector", "cholesky_factor_corr",
     "cholesky_factor_cov", "corr_matrix", "cov_matrix", "unit_vector")
+
+  # When the caller only wants a handful of parameters (e.g.
+  # PriorPosteriorPlotStan()'s `pars`), a statement whose declared name(s)
+  # aren't in that set is skipped entirely, before any size-resolution or
+  # type-support check runs - so a model's other parameters (random-effect
+  # z-scores, correlation Cholesky factors, etc.) generate no warnings at
+  # all rather than warnings about parameters nobody asked to plot.
+  wanted <- function(candidate_names) {
+    is.null(pars_filter) || any(candidate_names %in% pars_filter)
+  }
+
+  # Generic name extractor for declaration shapes this function doesn't
+  # otherwise parse (the `unsupported_types` catch-all covers many - array,
+  # simplex, ordered, corr_matrix, etc. - each with a different
+  # bracket/constraint layout). Stan always closes any <...>/[...] type
+  # annotation before listing variable names, so the name list is
+  # whatever's left after the last "]" (if present), else the last ">"
+  # (if present), else the leading type keyword.
+  extract_declared_names <- function(stmt) {
+    after <- if (grepl("\\]", stmt)) {
+      sub("^.*\\]\\s*", "", stmt)
+    } else if (grepl(">", stmt)) {
+      sub("^.*>\\s*", "", stmt)
+    } else {
+      sub("^[A-Za-z_][A-Za-z0-9_]*\\s+", "", stmt)
+    }
+    trimws(strsplit(sub("=.*$", "", after), ",")[[1]])
+  }
 
   results <- list()
 
@@ -649,6 +677,7 @@ parse_parameters_block <- function(block, data_list = NULL) {
       bounds <- parse_bounds(m_vec[3], data_list)
       size_expr <- trimws(m_vec[4])
       names_str <- sub("=.*$", "", m_vec[5])  # drop any "= expr" definition
+      if (!wanted(trimws(strsplit(names_str, ",")[[1]]))) next
 
       n_elem <- resolve_numeric(size_expr, data_list)
       if (is.na(n_elem)) {
@@ -681,6 +710,7 @@ parse_parameters_block <- function(block, data_list = NULL) {
       nrow_expr <- trimws(m_mat[4])
       ncol_expr <- trimws(m_mat[5])
       names_str <- sub("=.*$", "", m_mat[6])  # drop any "= expr" definition
+      if (!wanted(trimws(strsplit(names_str, ",")[[1]]))) next
 
       n_row <- resolve_numeric(nrow_expr, data_list)
       n_col <- resolve_numeric(ncol_expr, data_list)
@@ -718,6 +748,7 @@ parse_parameters_block <- function(block, data_list = NULL) {
     if (length(m_real) > 0) {
       bounds <- parse_bounds(m_real[3], data_list)
       names_str <- sub("=.*$", "", m_real[4])  # drop any "= expr" definition
+      if (!wanted(trimws(strsplit(names_str, ",")[[1]]))) next
 
       for (pname in trimws(strsplit(names_str, ",")[[1]])) {
         if (grepl("\\[", pname)) {
@@ -733,7 +764,7 @@ parse_parameters_block <- function(block, data_list = NULL) {
       next
     }
 
-    if (any(startsWith(stmt, unsupported_types))) {
+    if (any(startsWith(stmt, unsupported_types)) && wanted(extract_declared_names(stmt))) {
       warning(
         "Parameter declaration '", stmt, "' has an unsupported type; ",
         "only scalar 'real', 'vector' and 'matrix' parameters are ",
@@ -935,6 +966,15 @@ quantile_fn <- function(dist, p, arg1, arg2) {
 #'   \code{rstan::sampling(data = ...)}). Used to resolve prior arguments
 #'   or parameter bounds that reference named constants (e.g.
 #'   \code{normal(mu_prior, sigma_prior)}) rather than numeric literals.
+#' @param pars Optional vector of parameter names. If supplied, only
+#'   declarations matching these (exact matches, or the *base* name of a
+#'   vector/matrix parameter, e.g. \code{"beta"} for \code{"beta[1]"}) are
+#'   parsed - every other parameter in the model is skipped silently,
+#'   generating no warning even if its type or prior isn't one
+#'   \code{Create_df_priors()} can handle. Leave as \code{NULL} (the
+#'   default) to parse and report on every parameter in the model, e.g.
+#'   when building a \code{df_priors} you intend to reuse across several
+#'   different \code{pars} subsets later.
 #'
 #' @return A tibble with columns \code{par, v_min, v_max, v_lwr, v_upr,
 #'   dist, arg1, arg2}, suitable for use as the \code{df_priors} argument
@@ -1011,7 +1051,17 @@ quantile_fn <- function(dist, p, arg1, arg2) {
 #' # a ```{stan output.var = "wounds_model_2"} code chunk:
 #' df_priors2 <- Create_df_priors(wounds_model_2, data_list = list(mu_prior = 0))
 #' }
-Create_df_priors <- function(stan_code, data_list = NULL) {
+Create_df_priors <- function(stan_code, data_list = NULL, pars = NULL) {
+
+  # A caller who only wants a handful of parameters (the common case: a
+  # `pars` subset headed straight for PriorPosteriorPlotStan()/
+  # PriorPosteriorPlot()) shouldn't have to see warnings about every OTHER
+  # parameter in the model that Create_df_priors() can't handle (random-
+  # effect z-scores, correlation Cholesky factors, etc.) - strip any
+  # bracket index first, since `pars` may name either a base vector/matrix
+  # parameter ("beta") or one specific element ("beta[1]"), but the
+  # declaration-level filtering below only ever sees the base name.
+  pars_filter <- if (!is.null(pars)) unique(sub("\\[.*\\]$", "", pars)) else NULL
 
   # ---- read input ------------------------------------------------------
   # stan_code may be: (1) a compiled stanmodel S4 object (e.g. from
@@ -1064,11 +1114,11 @@ Create_df_priors <- function(stan_code, data_list = NULL) {
   }
 
   # ---- parameters + hard bounds -------------------------------------------
-  df_params <- parse_parameters_block(parameters_block, data_list)
+  df_params <- parse_parameters_block(parameters_block, data_list, pars_filter)
 
   if (!is.na(transformed_parameters_block)) {
     df_tp <- tryCatch(
-      parse_parameters_block(transformed_parameters_block, data_list),
+      parse_parameters_block(transformed_parameters_block, data_list, pars_filter),
       error = function(e) NULL  # e.g. transformed parameters block has no
     )                           # supported declarations, only statements
     if (!is.null(df_tp)) {
@@ -1196,12 +1246,16 @@ Create_df_priors <- function(stan_code, data_list = NULL) {
 #'   \code{df_priors$par} values (e.g. a scalar parameter, or an already
 #'   bracket-indexed element like \code{"etaR[1]"}), or the *base* name of
 #'   a vector/matrix parameter (e.g. \code{"etaR"}, \code{"beta_genus"}),
-#'   which expands to all of that parameter's elements automatically. If
-#'   omitted (\code{NULL},
-#'   the default), every parameter identified by \code{Create_df_priors()}
-#'   from \code{stan_code} is plotted -- note this means only the scalar
-#'   \code{real} parameters it recognises (see \code{Create_df_priors()}
-#'   for the current limitations on supported parameter types).
+#'   which expands to all of that parameter's elements automatically. This
+#'   is also forwarded into \code{Create_df_priors()}, so any OTHER
+#'   parameter in \code{stan_code} - one this call was never going to plot -
+#'   generates no warning even if it has an unsupported type or prior; see
+#'   \code{Create_df_priors()}'s own \code{pars} argument. If omitted
+#'   (\code{NULL}, the default), every parameter identified by
+#'   \code{Create_df_priors()} from \code{stan_code} is plotted (and
+#'   warned about, if unsupported) -- note this means only the parameter
+#'   types \code{Create_df_priors()} recognises (see its documentation for
+#'   the current limitations).
 #' @param data_list Optional named list (e.g. the same list passed to
 #'   \code{rstan::sampling(data = ...)}), used to resolve prior arguments or
 #'   parameter bounds that reference named constants rather than numeric
@@ -1233,7 +1287,11 @@ Create_df_priors <- function(stan_code, data_list = NULL) {
 #' }
 PriorPosteriorPlot <- function(stan_fit, stan_code, pars = NULL, data_list = NULL,
                                 ncol = NA, nbins = 25) {
-  df_priors <- Create_df_priors(stan_code, data_list = data_list)
+  # `pars` is forwarded into Create_df_priors() itself (not just applied
+  # as a filter afterwards) so that any OTHER parameter in the model - one
+  # nobody asked to plot - generates no warning at all, rather than a
+  # warning about a parameter this call was never going to show.
+  df_priors <- Create_df_priors(stan_code, data_list = data_list, pars = pars)
 
   if (is.null(pars)) {
     pars <- as.character(df_priors$par)

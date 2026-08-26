@@ -6,7 +6,7 @@
 \code{matrix[R, C]} parameters, and any hard lower/upper bounds declared on
 them.}
 \usage{
-parse_parameters_block(block, data_list = NULL)
+parse_parameters_block(block, data_list = NULL, pars_filter = NULL)
 }
 \description{
 Parse the parameters block: identify scalar \code{real}, \code{vector[N]} and

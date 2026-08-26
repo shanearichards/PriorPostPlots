@@ -29,12 +29,16 @@ containing Stan code, or a compiled \code{stanmodel} object. See
 \code{df_priors$par} values (e.g. a scalar parameter, or an already
 bracket-indexed element like \code{"etaR[1]"}), or the \emph{base} name of
 a vector/matrix parameter (e.g. \code{"etaR"}, \code{"beta_genus"}),
-which expands to all of that parameter's elements automatically. If
-omitted (\code{NULL},
-the default), every parameter identified by \code{Create_df_priors()}
-from \code{stan_code} is plotted -- note this means only the scalar
-\code{real} parameters it recognises (see \code{Create_df_priors()}
-for the current limitations on supported parameter types).}
+which expands to all of that parameter's elements automatically. This
+is also forwarded into \code{Create_df_priors()}, so any OTHER
+parameter in \code{stan_code} - one this call was never going to plot -
+generates no warning even if it has an unsupported type or prior; see
+\code{Create_df_priors()}'s own \code{pars} argument. If omitted
+(\code{NULL}, the default), every parameter identified by
+\code{Create_df_priors()} from \code{stan_code} is plotted (and
+warned about, if unsupported) -- note this means only the parameter
+types \code{Create_df_priors()} recognises (see its documentation for
+the current limitations).}
 
 \item{data_list}{Optional named list (e.g. the same list passed to
 \code{rstan::sampling(data = ...)}), used to resolve prior arguments or

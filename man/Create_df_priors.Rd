@@ -4,7 +4,7 @@
 \alias{Create_df_priors}
 \title{Build a df_priors data frame directly from Stan model code}
 \usage{
-Create_df_priors(stan_code, data_list = NULL)
+Create_df_priors(stan_code, data_list = NULL, pars = NULL)
 }
 \arguments{
 \item{stan_code}{A file path to a .stan file, a character string/vector
@@ -17,6 +17,16 @@ pass the resulting output object directly).}
 \code{rstan::sampling(data = ...)}). Used to resolve prior arguments
 or parameter bounds that reference named constants (e.g.
 \code{normal(mu_prior, sigma_prior)}) rather than numeric literals.}
+
+\item{pars}{Optional vector of parameter names. If supplied, only
+declarations matching these (exact matches, or the \emph{base} name of a
+vector/matrix parameter, e.g. \code{"beta"} for \code{"beta[1]"}) are
+parsed - every other parameter in the model is skipped silently,
+generating no warning even if its type or prior isn't one
+\code{Create_df_priors()} can handle. Leave as \code{NULL} (the
+default) to parse and report on every parameter in the model, e.g.
+when building a \code{df_priors} you intend to reuse across several
+different \code{pars} subsets later.}
 }
 \value{
 A tibble with columns \code{par, v_min, v_max, v_lwr, v_upr,

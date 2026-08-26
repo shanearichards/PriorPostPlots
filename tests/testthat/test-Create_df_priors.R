@@ -141,3 +141,63 @@ test_that("split_args_respecting_parens() doesn't split inside a nested call", {
     c("some_func(a, b)", "0.75")
   )
 })
+
+# Regression test for a real usability issue found 2026-08-26: calling
+# Create_df_priors() (directly, or via PriorPosteriorPlot()) on a real
+# hierarchical model with a `pars` subset still warned about every OTHER
+# parameter in the model - unsupported types (e.g. cholesky_factor_corr),
+# unsupported prior families (e.g. std_normal) on random-effect z-scores -
+# none of which the caller ever asked to plot. The `pars` argument now lets
+# Create_df_priors() skip anything not requested, silently.
+stan_code_mixed <- "
+  parameters {
+    real<lower=0.01> epsilon;
+    cholesky_factor_corr[2] L_block;
+    vector[2] z_block;
+  }
+  model {
+    epsilon ~ normal(0, 0.15);
+    z_block ~ std_normal();
+  }
+"
+
+test_that("without a `pars` filter, every parameter is parsed and warned about as before (no regression)", {
+  expect_warning(
+    expect_warning(
+      df <- Create_df_priors(stan_code_mixed),
+      "unsupported type"
+    ),
+    "Unsupported prior distribution"
+  )
+  expect_true(all(c("epsilon", "z_block[1]", "z_block[2]") %in% df$par))
+})
+
+test_that("with a `pars` filter, unrequested parameters generate no warning and are excluded", {
+  df <- expect_no_warning(Create_df_priors(stan_code_mixed, pars = "epsilon"))
+  expect_equal(df$par, "epsilon")
+})
+
+test_that("a `pars` filter naming one specific vector element still parses that whole vector's declaration, and still warns about that vector's own (genuinely unsupported) prior", {
+  # z_block's declaration is processed (its bounds/size are needed to
+  # produce the z_block[1] row actually asked for), so its std_normal
+  # prior - actually attached to the parameter that WAS requested, unlike
+  # cholesky_factor_corr[2] L_block or the other filtered-out declarations
+  # above - is still correctly flagged as unsupported, not silenced.
+  expect_warning(
+    df <- Create_df_priors(stan_code_mixed, pars = "z_block[1]"),
+    "Unsupported prior distribution"
+  )
+  expect_equal(sort(df$par), c("z_block[1]", "z_block[2]"))
+})
+
+test_that("PriorPosteriorPlot() forwards `pars` into Create_df_priors() so unrequested parameters stay silent", {
+  n_draws <- 50
+  # kept comfortably inside epsilon's real=<lower=0.01> bound and its
+  # normal(0, 0.15) prior's own display window, so the only thing this
+  # test can catch is stray warnings about z_block/L_block leaking through
+  mock_draws <- matrix(seq(0.05, 0.2, length.out = n_draws), nrow = n_draws,
+    dimnames = list(NULL, "epsilon"))
+  mock_fit <- list(draws = function(variables, format = "matrix") mock_draws)
+
+  expect_no_warning(PriorPosteriorPlot(mock_fit, stan_code_mixed, pars = "epsilon"))
+})

@@ -1,6 +1,6 @@
 Package: PriorPostPlots
 Title: Prior-posterior plots for Stan models
-Version: 0.0.4
+Version: 0.0.5
 Authors@R: 
     person(given = "Shane", family = "Richards", email = "shane.richards@utas.edu.au", role = c("aut", "cre"),
            comment = c(ORCID = "0000-0002-9638-5827"))
