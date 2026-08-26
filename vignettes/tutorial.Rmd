@@ -168,25 +168,37 @@ Full argument-by-argument detail is in `?PriorPosteriorPlot`.
 ## Using this with a model you've actually fitted
 
 Everything above used simulated draws so this document runs on its own. Real usage looks like this
-(not run here):
+(not run here) - a few common ways you might already be generating samples, all of which work
+directly with `PriorPosteriorPlot()`:
 
 ```{r, eval = FALSE}
+# cmdstanr - compile once, then sample. Real fits normally use several
+# chains and a warmup phase; PriorPosteriorPlot() doesn't need to know
+# about either - it automatically pools every chain's post-warmup draws.
 library(cmdstanr)
-
 mod <- cmdstan_model("my_model.stan")
-fit <- mod$sample(data = my_data)
-
-# every parameter PriorPosteriorPlot() recognises in the Stan code
+fit <- mod$sample(data = my_data, chains = 4, iter_warmup = 1000, iter_sampling = 1000)
 PriorPosteriorPlot(fit, "my_model.stan")
 
-# just the ones you care about right now, and resolving a data-block
-# constant (here, K) referenced in a vector/matrix declaration's size
+# rstan - compiles and samples in one step (note: rstan's `iter` argument
+# is warmup + sampling combined, rather than two separate arguments)
+library(rstan)
+fit <- stan(file = "my_model.stan", data = my_data, chains = 4, warmup = 1000, iter = 2000)
+PriorPosteriorPlot(fit, "my_model.stan")
+
+# already have a fitted object, but not the original file or code string?
+# a stanfit already carries its own compiled model, so nothing needs
+# extracting - just hand that straight to PriorPosteriorPlot():
+PriorPosteriorPlot(fit, fit@stanmodel)
+
+# a cmdstanr fit can hand back its own Stan code the same way:
+PriorPosteriorPlot(fit, fit$code())
+
+# restrict to specific parameters, and resolve a data-block constant
+# (here, K) referenced in a vector/matrix declaration's size
 PriorPosteriorPlot(fit, "my_model.stan", pars = c("beta", "sigma"),
                     data_list = my_data)
 ```
-
-An `rstan::stanfit` object (from `rstan::sampling()`/`rstan::stan()`) works exactly the same way as
-`stan_fit`, with no conversion needed.
 
 ## Common gotchas
 
