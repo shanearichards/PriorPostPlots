@@ -1,6 +1,8 @@
 # PriorPostPlots
 
-An R package for comparing prior and posterior distributions of parameters from Stan models.
+A visual check that your data - not just your priors - are driving your Bayesian model's
+conclusions. Give `PriorPosteriorPlot()` a fitted Stan model and the Stan code it was fitted from,
+and it plots each parameter's prior against its posterior on the same axis.
 
 **Note:** This package is still in development.
 
@@ -12,14 +14,16 @@ Before installing `PriorPostPlots`, ensure you have the `rstan` package installe
 install.packages("rstan")
 ```
 
-The development version of `PriorPostPlots` can be installed from GitHub:
+The development version of `PriorPostPlots` can be installed from GitHub. Passing
+`build_vignettes = TRUE` also builds the tutorial (see [Getting started](#getting-started) below)
+so it's available locally via `vignette("tutorial", package = "PriorPostPlots")`:
 
 ```r
 # install remotes if you don't have it
 if (!requireNamespace("remotes", quietly = TRUE)) install.packages("remotes")
 
-# normal install from GitHub
-remotes::install_github("shanearichards/PriorPostPlots")
+# install from GitHub, including the tutorial vignette
+remotes::install_github("shanearichards/PriorPostPlots", build_vignettes = TRUE)
 ```
 
 ## Troubleshooting
@@ -39,7 +43,8 @@ The fix is the same either way — restart R, then remove and reinstall forcing 
 # restart R session (recommended, e.g. Session > Restart R in RStudio)
 remove.packages("PriorPostPlots")
 if (!requireNamespace("remotes", quietly = TRUE)) install.packages("remotes")
-remotes::install_github("shanearichards/PriorPostPlots", dependencies = TRUE, force = TRUE, build = TRUE)
+remotes::install_github("shanearichards/PriorPostPlots", dependencies = TRUE, force = TRUE,
+                         build = TRUE, build_vignettes = TRUE)
 ```
 
 As a quick temporary workaround you can view any raw Rd directly from the repository and render it
@@ -66,21 +71,25 @@ devtools::check()
 
 # Overview
 
-`PriorPostPlots` provides functions for visualising prior and posterior distributions of selected parameters from Stan models.
-The main functions are:
+`PriorPostPlots` has one function you need: **`PriorPosteriorPlot()`**. Give it a fitted Stan model
+(`rstan` or `cmdstanr`) and the Stan code it was fitted from, and it reads the priors and hard
+bounds straight out of the Stan code, reads the posterior draws straight out of the fit, and
+produces one panel per parameter comparing the two - no intermediate data frame to build by hand.
 
-- `Create_df_priors()` — creates a data frame specifying prior distributions.
-- `LongParameters()` — extracts selected parameters from Stan output.
-- `PriorCurves()` — generates prior distribution curves.
-- `PriorPosteriorPlotStan()` — produces plots comparing prior and posterior distributions.
+Supported priors (Stan's own names/argument order): `normal`, `lognormal`, `exponential`, `gamma`,
+`uniform`, `double_exponential` (Laplace), `beta`, `cauchy`, `student_t`, and `lkj_corr_cholesky`
+(on a `cholesky_factor_corr[K]` parameter, plotted via its pairwise correlations). Hard bounds
+(`<lower=, upper=>`) are detected automatically, including half-normal/half-Cauchy truncation.
 
-# Example
+# Getting started
 
 ```r
 library(PriorPostPlots)
 
-# See the function documentation for examples
-?PriorPosteriorPlotStan
+vignette("tutorial", package = "PriorPostPlots")  # step-by-step walkthrough
+
+# full reference, including every supported prior's exact argument order
+?PriorPosteriorPlot
 ```
 
 # Author

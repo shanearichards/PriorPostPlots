@@ -1,0 +1,207 @@
+---
+title: "Getting Started with PriorPostPlots"
+output: rmarkdown::html_vignette
+vignette: >
+  %\VignetteIndexEntry{Getting Started with PriorPostPlots}
+  %\VignetteEngine{knitr::rmarkdown}
+  %\VignetteEncoding{UTF-8}
+---
+
+```{r, include = FALSE}
+knitr::opts_chunk$set(
+  collapse = TRUE,
+  comment = "#>",
+  fig.width = 7,
+  fig.height = 4.5
+)
+```
+
+```{r setup}
+library(PriorPostPlots)
+```
+
+## Why check priors against posteriors?
+
+Every Bayesian model has priors, and it's worth asking, for each parameter: did the data actually
+tell you something, or is the answer mostly just your prior talking back to you? `PriorPostPlots`
+answers that visually. Give it a fitted Stan model and the Stan code it came from, and it draws one
+panel per parameter: a shaded curve for the prior, and a histogram of the posterior draws, on the
+same axis.
+
+The whole package is really one function: **`PriorPosteriorPlot()`**. It reads the priors and hard
+bounds straight out of your Stan code, and the posterior draws straight out of your fitted model -
+there's no separate data frame to build by hand.
+
+This tutorial builds up from a single parameter to a small full example, using *simulated* posterior
+draws throughout (via a tiny stand-in for a fitted model), so every chunk here runs instantly with
+no Stan installation required. The last section shows what the equivalent code looks like against a
+model you've actually fitted.
+
+## A single parameter
+
+Suppose a model has one parameter, `mu`, with a fairly wide `normal(0, 10)` prior:
+
+```{r}
+stan_code <- "
+parameters {
+  real mu;
+}
+model {
+  mu ~ normal(0, 10);
+}
+"
+```
+
+Now suppose the data turned out to be quite informative, and the posterior for `mu` ended up
+concentrated around 5, with a small spread. We'll simulate that directly rather than actually
+fitting anything:
+
+```{r}
+set.seed(1)
+draws <- matrix(rnorm(1000, mean = 5, sd = 0.4), ncol = 1, dimnames = list(NULL, "mu"))
+```
+
+`PriorPosteriorPlot()` needs something that *behaves* like a fitted Stan model - specifically,
+something with a `$draws(variables, format = "matrix")` method (this is exactly what a real
+`cmdstanr` fit provides). A plain list works fine as a stand-in:
+
+```{r}
+mock_fit <- list(draws = function(variables, format = "matrix") draws[, variables, drop = FALSE])
+
+PriorPosteriorPlot(mock_fit, stan_code)
+```
+
+## Reading the plot
+
+- **Histogram narrow and off to one side of the shaded region**: the data pulled the estimate away
+  from the prior's own center, and did so with some precision. That's the case above - the prior was
+  centered at 0 and fairly spread out, but the posterior landed confidently around 5.
+- **Histogram spread out and similar in shape/width to the shaded prior region**: harder to tell
+  whether the data added much, since the posterior looks like the prior. This isn't necessarily a
+  problem - it can just mean the prior was already a reasonable summary, or that this particular
+  parameter is only weakly identified by the data you have. It's a prompt to look closer, not an
+  automatic verdict.
+- **Histogram pushed right up against the edge of the shaded region**: worth a second look at
+  whether the prior's range was too narrow for what the data actually wants to say. `PriorPosteriorPlot()`
+  always widens the display so every posterior draw is visible on the same axis as the prior, so this
+  shows up as the ribbon extending unusually far to reach the histogram, rather than the histogram
+  being cut off.
+
+## Multiple parameters, including a vector
+
+Real models have more than one parameter, and vector-valued parameters are common. `pars` accepts
+a *base* name for a vector and expands it to every element automatically - you never need to list
+`beta[1]`, `beta[2]`, ... by hand.
+
+```{r}
+stan_code <- "
+parameters {
+  real mu;
+  vector[2] beta;
+}
+model {
+  mu ~ normal(0, 5);
+  beta ~ student_t(4, 0, 2);
+}
+"
+
+set.seed(2)
+draws <- cbind(
+  mu        = rnorm(1000, 1.8, 0.3),
+  `beta[1]` = rnorm(1000, 0, 1.9),    # close to its prior - only weakly informed
+  `beta[2]` = rnorm(1000, -3, 0.4)    # far from its prior - strongly informed
+)
+mock_fit <- list(draws = function(variables, format = "matrix") {
+  # a real cmdstanr fit expands a base name like "beta" to "beta[1]", "beta[2]", ...
+  # automatically; this mock has to do that matching itself
+  cols <- unlist(lapply(variables, function(v) grep(paste0("^", v, "(\\[|$)"), colnames(draws), value = TRUE)))
+  draws[, cols, drop = FALSE]
+})
+
+PriorPosteriorPlot(mock_fit, stan_code)
+```
+
+Note the contrast between the two `beta` panels: `beta[1]`'s posterior looks a lot like its prior
+(weakly informed), while `beta[2]`'s has moved decisively away from 0 (strongly informed) - exactly
+the kind of per-element difference that's easy to miss without plotting each one.
+
+## A bounded parameter
+
+Variance/scale parameters are usually given a half-normal or half-Cauchy prior - a distribution with
+support restricted to positive values via a `<lower=0>` bound. This is detected automatically and
+drawn as a genuine cliff-edge, not just a display cutoff:
+
+```{r}
+stan_code <- "
+parameters {
+  real<lower=0> sigma;
+}
+model {
+  sigma ~ cauchy(0, 1);
+}
+"
+
+set.seed(3)
+draws <- matrix(abs(rnorm(1000, 0.3, 0.15)), ncol = 1, dimnames = list(NULL, "sigma"))
+mock_fit <- list(draws = function(variables, format = "matrix") draws[, variables, drop = FALSE])
+
+PriorPosteriorPlot(mock_fit, stan_code)
+```
+
+## Supported priors, at a glance
+
+| Stan syntax | Notes |
+|---|---|
+| `normal(mu, sigma)` | |
+| `lognormal(mu, sigma)` | |
+| `exponential(rate)` | |
+| `gamma(shape, rate)` | |
+| `uniform(lower, upper)` | |
+| `double_exponential(mu, scale)` | the Laplace distribution |
+| `beta(shape1, shape2)` | |
+| `cauchy(mu, sigma)` | `<lower=0>` renders as half-Cauchy |
+| `student_t(nu, mu, sigma)` | |
+| `lkj_corr_cholesky(eta)` | on a `cholesky_factor_corr[K]` parameter - see "Common gotchas" below |
+
+Full argument-by-argument detail is in `?PriorPosteriorPlot`.
+
+## Using this with a model you've actually fitted
+
+Everything above used simulated draws so this document runs on its own. Real usage looks like this
+(not run here):
+
+```{r, eval = FALSE}
+library(cmdstanr)
+
+mod <- cmdstan_model("my_model.stan")
+fit <- mod$sample(data = my_data)
+
+# every parameter PriorPosteriorPlot() recognises in the Stan code
+PriorPosteriorPlot(fit, "my_model.stan")
+
+# just the ones you care about right now, and resolving a data-block
+# constant (here, K) referenced in a vector/matrix declaration's size
+PriorPosteriorPlot(fit, "my_model.stan", pars = c("beta", "sigma"),
+                    data_list = my_data)
+```
+
+An `rstan::stanfit` object (from `rstan::sampling()`/`rstan::stan()`) works exactly the same way as
+`stan_fit`, with no conversion needed.
+
+## Common gotchas
+
+- **Correlated random effects.** If your model declares `cholesky_factor_corr[K] L;` with an
+  `L ~ lkj_corr_cholesky(eta);` prior (the standard way to give two or more random effects a
+  correlation), `PriorPosteriorPlot()` cannot plot `L`'s own raw entries - they aren't individually
+  meaningful. It plots the actual pairwise correlation(s) instead, but only if your Stan code
+  *also* computes them, via the standard line
+  `corr_matrix[K] Corr_L = multiply_lower_tri_self_transpose(L);` in `transformed parameters` or
+  `generated quantities`. If that line is missing, you'll get a warning telling you exactly what to
+  add - it's not an error, just nothing to plot for that parameter yet.
+- **An unrecognised prior gets no ribbon, not an error.** If a parameter's sampling statement uses a
+  distribution this package doesn't know (or has none at all, and no hard bounds), its panel simply
+  shows the histogram with no shaded region - a visual cue to double check that parameter by hand.
+- **Big models produce a lot of panels.** Leaving `pars = NULL` plots every parameter this function
+  recognises, which can be a lot for a hierarchical model with many random effects. Passing
+  `pars = c(...)` with just the parameters you actually want to check also keeps the console quiet
+  about anything unusual in the parts of the model you weren't asking about.
