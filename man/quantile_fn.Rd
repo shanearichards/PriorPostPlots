@@ -6,7 +6,7 @@
 distributions, using PriorPosteriorPlotStan()'s internal naming
 convention (dist, arg1, arg2).}
 \usage{
-quantile_fn(dist, p, arg1, arg2)
+quantile_fn(dist, p, arg1, arg2, arg3 = NA_real_)
 }
 \description{
 Evaluate the quantile function for one of the seven supported

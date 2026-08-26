@@ -123,6 +123,55 @@ rlkjcorr1 <- function(n, eta, K) {
   2 * stats::rbeta(n, alpha, alpha) - 1
 }
 
+#' Student-t distribution, Stan's location-scale parameterisation
+#'
+#' @description
+#' Base R's \code{stats::dt()}/\code{pt()}/\code{qt()} only implement the
+#' standard (location 0, scale 1) Student-t distribution. Stan's
+#' \code{student_t(nu, mu, sigma)} adds a location \code{mu} and scale
+#' \code{sigma}; \code{dstudent_t()}/\code{pstudent_t()}/\code{qstudent_t()}/
+#' \code{rstudent_t()} implement that three-argument form directly, via the
+#' standard location-scale transform (\code{(x - mu) / sigma}).
+#'
+#' @param x,q vector of quantities.
+#' @param p vector of probabilities.
+#' @param n number of observations.
+#' @param nu degrees of freedom (\code{nu > 0}; \code{nu = 1} is the Cauchy
+#'   distribution, and the limit \code{nu -> Inf} is the normal
+#'   distribution).
+#' @param mu location.
+#' @param sigma scale (\code{sigma > 0}).
+#'
+#' @return Vector of densities (\code{dstudent_t}), probabilities
+#'   (\code{pstudent_t}), quantiles (\code{qstudent_t}), or random draws
+#'   (\code{rstudent_t}).
+#' @name student_t
+NULL
+
+#' @rdname student_t
+#' @export
+dstudent_t <- function(x, nu, mu = 0, sigma = 1) {
+  stats::dt((x - mu) / sigma, nu) / sigma
+}
+
+#' @rdname student_t
+#' @export
+pstudent_t <- function(q, nu, mu = 0, sigma = 1) {
+  stats::pt((q - mu) / sigma, nu)
+}
+
+#' @rdname student_t
+#' @export
+qstudent_t <- function(p, nu, mu = 0, sigma = 1) {
+  mu + sigma * stats::qt(p, nu)
+}
+
+#' @rdname student_t
+#' @export
+rstudent_t <- function(n, nu, mu = 0, sigma = 1) {
+  mu + sigma * stats::rt(n, nu)
+}
+
 # convert list of posterior estimates into long format data frame
 LongParameters <- function(l_params, pars_use) {
 
@@ -175,13 +224,14 @@ PriorCurves <- function(df_param) {
     	dist     = df_param$dist,
       arg1   = df_param$arg1,
     	arg2   = df_param$arg2,
+    	arg3   = df_param$arg3,
     	v_min  = df_param$v_min,
     	v_max  = df_param$v_max,
   	  v_lwr  = pmax(df_param$v_min, df_param$v_lwr, na.rm=TRUE),
   	  v_upr  = pmin(df_param$v_max, df_param$v_upr, na.rm=TRUE)
     ),
 
-    function(par, dist, arg1, arg2, v_min, v_max, v_lwr, v_upr) {
+    function(par, dist, arg1, arg2, arg3, v_min, v_max, v_lwr, v_upr) {
       x_vals <- seq(v_min, v_max, length.out = 100)
 
       y_vals <- switch(dist,
@@ -193,6 +243,8 @@ PriorCurves <- function(df_param) {
       	uniform     = stats::dunif(x_vals, min = arg1, max = arg2),
       	beta        = stats::dbeta(x_vals, shape1 = arg1, shape2 = arg2),
         lkj_corr    = dlkjcorr1(x_vals, eta = arg1, K = arg2),
+        cauchy      = stats::dcauchy(x_vals, location = arg1, scale = arg2),
+        student_t   = dstudent_t(x_vals, nu = arg1, mu = arg2, sigma = arg3),
         rep(NA, length(x_vals))
       )
 
@@ -213,6 +265,10 @@ PriorCurves <- function(df_param) {
           stats::pbeta(v_lwr, shape1 = arg1, shape2 = arg2),
         lkj_corr = plkjcorr1(v_upr, eta = arg1, K = arg2) -
           plkjcorr1(v_lwr, eta = arg1, K = arg2),
+        cauchy = stats::pcauchy(v_upr, location = arg1, scale = arg2) -
+          stats::pcauchy(v_lwr, location = arg1, scale = arg2),
+        student_t = pstudent_t(v_upr, nu = arg1, mu = arg2, sigma = arg3) -
+          pstudent_t(v_lwr, nu = arg1, mu = arg2, sigma = arg3),
         rep(NA, length(x_vals))
       )
 
@@ -316,15 +372,15 @@ extract_posterior_list <- function(stan_fit, base_pars) {
 #'
 #' @param stan_fit A fitted Stan model: either an object returned by \code{rstan::sampling()}/\code{rstan::stan()} (class \code{"stanfit"}), or a \code{cmdstanr} fit object (e.g. from \code{cmdstanr::cmdstan_model()$sample()}, class \code{"CmdStanMCMC"}/\code{"CmdStanFit"}) or anything else exposing the same \code{$draws(variables = ..., format = "matrix")} method. See \code{extract_posterior_list()} for exactly how each is handled.
 #' @param pars A vector of parameter names associated with the stan model for plotting. Entries may be exact \code{df_priors$par} values (e.g. a scalar parameter, or an already bracket-indexed element like \code{"etaR[1]"}), or the *base* name of a vector/matrix parameter (e.g. \code{"etaR"}, \code{"beta_genus"}), which expands to all of that parameter's elements as they appear in \code{df_priors} (e.g. \code{"etaR[1]"}, \code{"etaR[2]"}, \code{"etaR[3]"}) -- so elements don't need to be listed individually.
-#' @param df_priors A data frame containing information that describes the prior for each parameter. The data frame must have the columns par, dist, arg1, arg2, v_min, v_max, v_lwr, v_upr. par = parameter name, dist = prior distribution (normal, log_normal, exponential, gamma, uniform, laplace, beta, lkj_corr), arg1 = first distribution parameter, arg2 = second distribution parameter (NA if not needed; for lkj_corr, arg1 is eta and arg2 is K, the correlation matrix's dimension - see ?lkjcorr1), v_min and v_max are the bounds of the plotted prior, v_lwr and v_upr are the stan-imposed parameter bounds (NA if none are set).
+#' @param df_priors A data frame containing information that describes the prior for each parameter. The data frame must have the columns par, dist, arg1, arg2, v_min, v_max, v_lwr, v_upr; an `arg3` column is optional (defaulted to NA if absent) and only used by three-argument families (currently just student_t). par = parameter name, dist = prior distribution (normal, log_normal, exponential, gamma, uniform, laplace, beta, cauchy, student_t, lkj_corr), arg1 = first distribution parameter, arg2 = second distribution parameter (NA if not needed; for lkj_corr, arg1 is eta and arg2 is K, the correlation matrix's dimension - see ?lkjcorr1; for student_t, arg1/arg2/arg3 are nu/mu/sigma - see ?student_t), v_min and v_max are the bounds of the plotted prior, v_lwr and v_upr are the stan-imposed parameter bounds (NA if none are set).
 #' @param ncol Number of columns provided to facet_wrap. Square arrangement is produced when no value is provided.
 #' @param nbins Number of bins used to display histograms (default is 25).
 #'
 #' @return A ggplot object.
 #' @details
 #' Currently, the distributions allowed are uniform, normal, log_normal, exponential,
-#'  gamma, laplace, beta, and lkj_corr (the marginal distribution of a single pairwise
-#'  correlation under an lkj_corr_cholesky() prior - see ?lkjcorr1 and
+#'  gamma, laplace, beta, cauchy, student_t, and lkj_corr (the marginal distribution of a
+#'  single pairwise correlation under an lkj_corr_cholesky() prior - see ?lkjcorr1 and
 #'  Create_df_priors()'s own documentation for how these rows get built). See
 #'  corresponding d-functions for arguments required.
 #'  Laplace has two arguments, the mean (mu) and the decay rate (b), and is described by
@@ -369,6 +425,16 @@ PriorPosteriorPlotStan <- function(stan_fit, pars, df_priors, ncol = NA, nbins =
 
   if (!all(required_names %in% colnames(df_priors))) {
     stop("Error: df_priors argument does not contain all required column names.")
+  }
+
+  # 'arg3' is deliberately NOT in required_names above: it only exists for
+  # three-argument families (currently just student_t) added after every
+  # other supported family, so a df_priors built by hand (or by an older
+  # version of Create_df_priors()) before arg3 existed - two-argument
+  # families only - should keep working unchanged rather than erroring on
+  # a missing column it never needed.
+  if (!("arg3" %in% colnames(df_priors))) {
+    df_priors$arg3 <- NA_real_
   }
 
   pars_use <- unique(pars) # remove any duplicate parameter names
@@ -1163,7 +1229,7 @@ parse_lkj_priors <- function(parameters_block, model_block,
         rows[[length(rows) + 1]] <- data.frame(
           par   = paste0(corr_name, "[", i, ",", j, "]"),
           v_min = -1, v_max = 1, v_lwr = -1, v_upr = 1,
-          dist  = "lkj_corr", arg1 = eta, arg2 = k_val,
+          dist  = "lkj_corr", arg1 = eta, arg2 = k_val, arg3 = NA_real_,
           stringsAsFactors = FALSE
         )
       }
@@ -1184,14 +1250,16 @@ parse_lkj_priors <- function(parameters_block, model_block,
   gamma               = list(dist = "gamma",       nargs = 2),
   uniform            = list(dist = "uniform",     nargs = 2),
   double_exponential = list(dist = "laplace",     nargs = 2),
-  beta               = list(dist = "beta",        nargs = 2)
+  beta               = list(dist = "beta",        nargs = 2),
+  cauchy             = list(dist = "cauchy",      nargs = 2),
+  student_t          = list(dist = "student_t",   nargs = 3)
 )
 
 #' Evaluate the quantile function for one of the seven supported
 #' distributions, using PriorPosteriorPlotStan()'s internal naming
 #' convention (dist, arg1, arg2).
 #' @keywords internal
-quantile_fn <- function(dist, p, arg1, arg2) {
+quantile_fn <- function(dist, p, arg1, arg2, arg3 = NA_real_) {
   switch(dist,
     normal      = stats::qnorm(p, mean = arg1, sd = arg2),
     log_normal  = stats::qlnorm(p, meanlog = arg1, sdlog = arg2),
@@ -1201,6 +1269,8 @@ quantile_fn <- function(dist, p, arg1, arg2) {
     laplace     = qlaplace(p, mu = arg1, b = arg2),
     beta        = stats::qbeta(p, shape1 = arg1, shape2 = arg2),
     lkj_corr    = qlkjcorr1(p, eta = arg1, K = arg2),
+    cauchy      = stats::qcauchy(p, location = arg1, scale = arg2),
+    student_t   = qstudent_t(p, nu = arg1, mu = arg2, sigma = arg3),
     NA_real_
   )
 }
@@ -1237,14 +1307,19 @@ quantile_fn <- function(dist, p, arg1, arg2) {
 #'   different \code{pars} subsets later.
 #'
 #' @return A tibble with columns \code{par, v_min, v_max, v_lwr, v_upr,
-#'   dist, arg1, arg2}, suitable for use as the \code{df_priors} argument
-#'   to \code{PriorPosteriorPlotStan()}.
+#'   dist, arg1, arg2, arg3}, suitable for use as the \code{df_priors}
+#'   argument to \code{PriorPosteriorPlotStan()}. \code{arg3} is only
+#'   ever non-NA for \code{student_t} rows (its third argument, sigma).
 #'
 #' @details
 #' Currently supported prior distributions (matching Stan's names on the
 #' left): \code{normal}, \code{lognormal} (-> \code{log_normal}),
 #' \code{exponential}, \code{gamma}, \code{uniform},
-#' \code{double_exponential} (-> \code{laplace}), \code{beta}.
+#' \code{double_exponential} (-> \code{laplace}), \code{beta},
+#' \code{cauchy}, \code{student_t} (see \code{?student_t} for its
+#' three-argument \code{nu, mu, sigma} form - a \code{<lower=0>} bound
+#' combined with \code{cauchy} renders as half-Cauchy, the same way
+#' \code{normal + <lower=0>} already renders as half-normal).
 #'
 #' Scalar \code{real}, \code{vector[N]} and \code{matrix[R, C]} parameters
 #' are currently supported (not \code{array}, \code{int}, \code{simplex},
@@ -1441,6 +1516,7 @@ Create_df_priors <- function(stan_code, data_list = NULL, pars = NULL) {
     dist <- NA_character_
     arg1 <- NA_real_
     arg2 <- NA_real_
+    arg3 <- NA_real_
 
     prior_entry <- priors[[pname]]
     if (is.null(prior_entry)) prior_entry <- priors[[base]]
@@ -1456,8 +1532,11 @@ Create_df_priors <- function(stan_code, data_list = NULL, pars = NULL) {
         if (length(args) >= 1 && nzchar(args[1])) {
           arg1 <- resolve_numeric(args[1], data_list, pname)
         }
-        if (mapping$nargs == 2 && length(args) >= 2 && nzchar(args[2])) {
+        if (mapping$nargs >= 2 && length(args) >= 2 && nzchar(args[2])) {
           arg2 <- resolve_numeric(args[2], data_list, pname)
+        }
+        if (mapping$nargs >= 3 && length(args) >= 3 && nzchar(args[3])) {
+          arg3 <- resolve_numeric(args[3], data_list, pname)
         }
       } else {
         warning(
@@ -1484,10 +1563,10 @@ Create_df_priors <- function(stan_code, data_list = NULL, pars = NULL) {
     v_max <- v_upr
 
     if (is.na(v_min) && !is.na(dist) && !is.na(arg1)) {
-      v_min <- quantile_fn(dist, 0.025, arg1, arg2)
+      v_min <- quantile_fn(dist, 0.025, arg1, arg2, arg3)
     }
     if (is.na(v_max) && !is.na(dist) && !is.na(arg1)) {
-      v_max <- quantile_fn(dist, 0.975, arg1, arg2)
+      v_max <- quantile_fn(dist, 0.975, arg1, arg2, arg3)
     }
 
     data.frame(
@@ -1499,6 +1578,7 @@ Create_df_priors <- function(stan_code, data_list = NULL, pars = NULL) {
       dist  = dist,
       arg1  = arg1,
       arg2  = arg2,
+      arg3  = arg3,
       stringsAsFactors = FALSE
     )
   })

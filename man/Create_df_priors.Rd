@@ -30,8 +30,9 @@ different \code{pars} subsets later.}
 }
 \value{
 A tibble with columns \code{par, v_min, v_max, v_lwr, v_upr,
-  dist, arg1, arg2}, suitable for use as the \code{df_priors} argument
-to \code{PriorPosteriorPlotStan()}.
+  dist, arg1, arg2, arg3}, suitable for use as the \code{df_priors}
+argument to \code{PriorPosteriorPlotStan()}. \code{arg3} is only
+ever non-NA for \code{student_t} rows (its third argument, sigma).
 }
 \description{
 Parses Stan code to identify scalar \code{real} model parameters, any hard
@@ -44,7 +45,11 @@ statements. The result is a data frame in the format required by the
 Currently supported prior distributions (matching Stan's names on the
 left): \code{normal}, \code{lognormal} (-> \code{log_normal}),
 \code{exponential}, \code{gamma}, \code{uniform},
-\code{double_exponential} (-> \code{laplace}), \code{beta}.
+\code{double_exponential} (-> \code{laplace}), \code{beta},
+\code{cauchy}, \code{student_t} (see \code{?student_t} for its
+three-argument \code{nu, mu, sigma} form - a \code{<lower=0>} bound
+combined with \code{cauchy} renders as half-Cauchy, the same way
+\code{normal + <lower=0>} already renders as half-normal).
 
 Scalar \code{real}, \code{vector[N]} and \code{matrix[R, C]} parameters
 are currently supported (not \code{array}, \code{int}, \code{simplex},
