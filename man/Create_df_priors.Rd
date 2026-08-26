@@ -4,7 +4,7 @@
 \alias{Create_df_priors}
 \title{Build a df_priors data frame directly from Stan model code}
 \usage{
-Create_df_priors(stan_code, data_list = NULL, pars = NULL)
+Create_df_priors(stan_code, data_list = NULL, pars = NULL, stan_fit = NULL)
 }
 \arguments{
 \item{stan_code}{A file path to a .stan file, a character string/vector
@@ -16,7 +16,10 @@ pass the resulting output object directly).}
 \item{data_list}{Optional named list (e.g. the same list passed to
 \code{rstan::sampling(data = ...)}). Used to resolve prior arguments
 or parameter bounds that reference named constants (e.g.
-\code{normal(mu_prior, sigma_prior)}) rather than numeric literals.}
+\code{normal(mu_prior, sigma_prior)}) rather than numeric literals.
+A named constant that sizes a \code{vector}/\code{matrix} declaration
+(e.g. \code{vector[K] beta}) can also be resolved from \code{stan_fit}
+instead, if supplied - see \code{stan_fit} below.}
 
 \item{pars}{Optional vector of parameter names. If supplied, only
 declarations matching these (exact matches, or the \emph{base} name of a
@@ -27,6 +30,16 @@ generating no warning even if its type or prior isn't one
 default) to parse and report on every parameter in the model, e.g.
 when building a \code{df_priors} you intend to reuse across several
 different \code{pars} subsets later.}
+
+\item{stan_fit}{Optional fitted Stan model (\code{rstan} or
+\code{cmdstanr}). If a \code{vector}/\code{matrix} parameter's size
+can't be resolved from a literal or from \code{data_list} (e.g. its
+declared size is a data-block constant and \code{data_list} wasn't
+given, or didn't include it), the size is instead inferred from this
+fit's own posterior draws - Stan itself had to resolve the size to
+produce them, so the fit is always a correct fallback source for it.
+Left as \code{NULL} (the default), only \code{data_list} is used, and
+an unresolved size falls back to the usual warn-and-skip behaviour.}
 }
 \value{
 A tibble with columns \code{par, v_min, v_max, v_lwr, v_upr,

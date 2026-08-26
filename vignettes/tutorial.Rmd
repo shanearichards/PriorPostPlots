@@ -162,11 +162,11 @@ parameters {
 }
 ```
 
-`PriorPosteriorPlot()` only ever reads the Stan *code* as text - it has no way to know what `K`
-actually equals, so it can't tell how many `beta[...]` panels to draw. `data_list` is the fix: pass
-it the same named list of data you gave to `mod$sample(data = ...)` (or `rstan::stan(data = ...)`),
-and any bound or prior argument written as a name rather than a literal number is resolved from it.
-It doesn't need to be the *complete* data list you fit with - just enough of it to resolve whatever
+`PriorPosteriorPlot()` only ever reads the Stan *code* as text, so on its own it has no way to know
+what `K` actually equals. There are two ways it can find out. The first is `data_list`: pass it the
+same named list of data you gave to `mod$sample(data = ...)` (or `rstan::stan(data = ...)`), and any
+bound or prior argument written as a name rather than a literal number is resolved from it. It
+doesn't need to be the *complete* data list you fit with - just enough of it to resolve whatever
 named constants the code actually references.
 
 ```{r}
@@ -192,12 +192,47 @@ mock_fit <- list(draws = function(variables, format = "matrix") {
 PriorPosteriorPlot(mock_fit, stan_code, data_list = list(K = 3))
 ```
 
-Leaving out `data_list` here wouldn't just produce a slightly wrong plot - since `K` can't be
-resolved, `PriorPosteriorPlot()` can't tell how many elements `beta` has, so it drops `beta`
-entirely and (since it's the only parameter in this small example) ends up with nothing left to
-plot at all. In a bigger model, an unresolved size just quietly drops that one parameter while
-everything else still plots - either way, a warning names exactly which parameter and which
-constant it couldn't resolve, so it's easy to spot.
+The second way is automatic, and needs nothing from you: if `data_list` is left out (or doesn't
+include the constant needed), `PriorPosteriorPlot()` falls back to inferring the size from
+`stan_fit`'s own posterior draws - Stan itself had to resolve `K` to produce them, so a `beta[1]`,
+`beta[2]`, `beta[3]` in the fit is just as good a source for "`beta` has 3 elements" as `data_list`
+would have been. In fact, the call above would produce the same three panels even with
+`data_list` left out entirely, since `mock_fit` already exposes all three `beta[...]` columns. This
+fallback only fires once resolving the size from a literal or `data_list` has already failed, so
+passing `data_list` never hurts and always takes priority when both are available.
+
+What this fallback *can't* do is resolve a value that isn't part of the fitted output at all - a
+named constant used as a **prior's own argument**, rather than as a size:
+
+```{r}
+stan_code <- "
+data {
+  real mu_prior;
+}
+parameters {
+  real beta;
+}
+model {
+  beta ~ normal(mu_prior, 1);
+}
+"
+
+set.seed(5)
+draws <- matrix(rnorm(1000, 2, 0.5), ncol = 1, dimnames = list(NULL, "beta"))
+mock_fit <- list(draws = function(variables, format = "matrix") draws[, variables, drop = FALSE])
+
+PriorPosteriorPlot(mock_fit, stan_code)  # no data_list - mu_prior can't be resolved
+```
+
+`mu_prior` never appears in the posterior draws - it's an input to the prior, not an output of
+fitting - so there's no fallback for it. `beta`'s panel is still drawn (the parameter itself isn't
+dropped), but with no prior ribbon, since the prior's center couldn't be pinned down. Passing
+`data_list = list(mu_prior = 0)` resolves it and restores the ribbon. This is the one situation
+`data_list` remains genuinely necessary for: a prior argument that names a `data`-block constant
+directly, rather than a `vector`/`matrix` size.
+
+Either way - an unresolved size or an unresolved prior argument - a warning names exactly which
+parameter and which constant it couldn't resolve, so it's easy to spot.
 
 ## Supported priors, at a glance
 

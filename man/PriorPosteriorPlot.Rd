@@ -43,7 +43,13 @@ about in the first place.}
 passed as \verb{data =} when fitting - used to resolve a bound or prior
 argument that references a data-block constant by name instead of a
 literal number (e.g. \code{vector[K] beta;} needs \code{K}'s value to know
-how many elements \code{beta} has).}
+how many elements \code{beta} has). If left \code{NULL} (or it doesn't
+include the needed constant), a \code{vector}/\code{matrix} size is
+instead inferred from \code{stan_fit}'s own posterior draws where
+possible - Stan itself had to resolve the size to produce them - so
+\code{data_list} is only strictly required for resolving a \emph{prior's}
+own named hyperparameter (e.g. \code{normal(mu_prior, sigma_prior)}),
+which has no such fallback.}
 
 \item{ncol}{Number of columns in the panel grid. Left to arrange itself
 into a roughly square grid if not given.}

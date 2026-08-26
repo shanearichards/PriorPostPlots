@@ -367,6 +367,42 @@ extract_posterior_list <- function(stan_fit, base_pars) {
   out
 }
 
+#' A `vector[K]`/`matrix[R, C]` declaration's size sometimes references a
+#' data-block constant (`K`) rather than a literal, and `data_list` is the
+#' usual way to resolve that. But Stan itself already had to resolve it to
+#' produce the posterior draws in the first place, so if a fitted model is
+#' available, its own draws are a second, independent source of truth for
+#' a given parameter's true size - a cmdstanr fit's `"name[1]"`, `"name[2]"`,
+#' ... column names, or an rstan fit's already-reshaped
+#' `iterations x K` matrix (or `iterations x R x C` array for a matrix
+#' parameter), directly reveal it with no need to know what `K` itself
+#' equals. This is tried only as a fallback, after `data_list`/a literal
+#' has already failed to resolve the size - see `Create_df_priors()`'s
+#' `stan_fit` argument.
+#'
+#' `kind` is `"vector"` (returns a single size, or `NA` if it can't be
+#' determined) or `"matrix"` (returns `c(nrow, ncol)`, each `NA`
+#' independently if undetermined). Any failure - the parameter isn't in
+#' the fit, or `stan_fit`'s own `$draws()`/`rstan::extract()` errors for
+#' any reason - is treated as "couldn't infer", not a hard error, since
+#' this is only ever a best-effort second attempt.
+#' @keywords internal
+infer_size_from_fit <- function(stan_fit, pname, kind = c("vector", "matrix")) {
+  kind <- match.arg(kind)
+  na_result <- if (kind == "vector") NA_real_ else c(NA_real_, NA_real_)
+
+  val <- tryCatch(extract_posterior_list(stan_fit, pname)[[pname]], error = function(e) NULL)
+  if (is.null(val)) return(na_result)
+
+  if (kind == "vector") {
+    if (is.matrix(val)) return(ncol(val))
+    return(NA_real_)
+  }
+
+  if (is.array(val) && length(dim(val)) == 3) return(dim(val)[2:3])
+  c(NA_real_, NA_real_)
+}
+
 #' Generates prior-posterior plots
 #'
 #' @description
@@ -736,7 +772,8 @@ resolve_numeric <- function(x, data_list = NULL, par_name = NULL) {
 #' `matrix[R, C]` parameters, and any hard lower/upper bounds declared on
 #' them.
 #' @keywords internal
-parse_parameters_block <- function(block, data_list = NULL, pars_filter = NULL, skip_names = NULL) {
+parse_parameters_block <- function(block, data_list = NULL, pars_filter = NULL, skip_names = NULL,
+                                    size_resolver = NULL) {
   statements <- strsplit(block, ";")[[1]]
   statements <- trimws(gsub("\\s+", " ", statements))
   statements <- statements[statements != ""]
@@ -824,21 +861,35 @@ parse_parameters_block <- function(block, data_list = NULL, pars_filter = NULL, 
       bounds <- parse_bounds(m_vec[3], data_list)
       size_expr <- trimws(m_vec[4])
       names_str <- sub("=.*$", "", m_vec[5])  # drop any "= expr" definition
-      if (!wanted(trimws(strsplit(names_str, ",")[[1]]))) next
+      candidate_names <- trimws(strsplit(names_str, ",")[[1]])
+      if (!wanted(candidate_names)) next
 
-      n_elem <- resolve_numeric(size_expr, data_list)
-      if (is.na(n_elem)) {
-        warning(
-          "Could not resolve size '", size_expr, "' for vector parameter(s) '",
-          trimws(names_str), "'; pass its value via 'data_list' if it's a ",
-          "data-block constant. Skipping."
-        )
-        next
-      }
-      n_elem <- as.integer(round(n_elem))
+      # Resolved once, quietly - it's shared by every name in this
+      # declaration (e.g. "vector[K] beta, gamma;" - same K for both), but
+      # whether it actually applies to a given name is only known once the
+      # per-name fallback below has also had its chance to run, so any
+      # "could not resolve" warning is deferred until then rather than
+      # fired here for a size that might still be inferred from the fit.
+      shared_n_elem <- suppressWarnings(resolve_numeric(size_expr, data_list))
 
-      for (pname in trimws(strsplit(names_str, ",")[[1]])) {
+      for (pname in candidate_names) {
         if (!grepl("^[A-Za-z_][A-Za-z0-9_]*$", pname)) next
+
+        n_elem <- shared_n_elem
+        if (is.na(n_elem) && !is.null(size_resolver)) {
+          n_elem <- size_resolver(pname, "vector")
+        }
+        if (is.na(n_elem)) {
+          warning(
+            "Could not resolve size '", size_expr, "' for vector parameter '",
+            pname, "'; pass its value via 'data_list' if it's a data-block ",
+            "constant, or make sure '", pname, "' is present in the fitted ",
+            "model's posterior draws so its size can be inferred from ",
+            "those instead. Skipping."
+          )
+          next
+        }
+        n_elem <- as.integer(round(n_elem))
         for (i in seq_len(n_elem)) {
           add_result(paste0(pname, "[", i, "]"), pname, bounds$v_lwr, bounds$v_upr)
         }
@@ -857,28 +908,43 @@ parse_parameters_block <- function(block, data_list = NULL, pars_filter = NULL, 
       nrow_expr <- trimws(m_mat[4])
       ncol_expr <- trimws(m_mat[5])
       names_str <- sub("=.*$", "", m_mat[6])  # drop any "= expr" definition
-      if (!wanted(trimws(strsplit(names_str, ",")[[1]]))) next
+      candidate_names <- trimws(strsplit(names_str, ",")[[1]])
+      if (!wanted(candidate_names)) next
 
-      n_row <- resolve_numeric(nrow_expr, data_list)
-      n_col <- resolve_numeric(ncol_expr, data_list)
-      if (is.na(n_row) || is.na(n_col)) {
-        warning(
-          "Could not resolve dimensions '[", nrow_expr, ", ", ncol_expr,
-          "]' for matrix parameter(s) '", trimws(names_str), "'; pass ",
-          "the missing value(s) via 'data_list' if they are data-block ",
-          "constants. Skipping."
-        )
-        next
-      }
-      n_row <- as.integer(round(n_row))
-      n_col <- as.integer(round(n_col))
+      # Resolved once, quietly - see the vector branch above for why: a
+      # size unresolved here still gets a fallback attempt per name below
+      # before any warning is raised.
+      shared_n_row <- suppressWarnings(resolve_numeric(nrow_expr, data_list))
+      shared_n_col <- suppressWarnings(resolve_numeric(ncol_expr, data_list))
 
-      # Elements are named "name[i,j]" in column-major order (j outer,
-      # i inner), matching Stan's own parameter-naming convention, and
-      # matching how LongParameters() flattens the corresponding
-      # iterations x R x C array returned by rstan::extract().
-      for (pname in trimws(strsplit(names_str, ",")[[1]])) {
+      for (pname in candidate_names) {
         if (!grepl("^[A-Za-z_][A-Za-z0-9_]*$", pname)) next
+
+        n_row <- shared_n_row
+        n_col <- shared_n_col
+        if ((is.na(n_row) || is.na(n_col)) && !is.null(size_resolver)) {
+          inferred <- size_resolver(pname, "matrix")
+          if (is.na(n_row)) n_row <- inferred[1]
+          if (is.na(n_col)) n_col <- inferred[2]
+        }
+        if (is.na(n_row) || is.na(n_col)) {
+          warning(
+            "Could not resolve dimensions '[", nrow_expr, ", ", ncol_expr,
+            "]' for matrix parameter '", pname, "'; pass the missing ",
+            "value(s) via 'data_list' if they are data-block constants, ",
+            "or make sure '", pname, "' is present in the fitted model's ",
+            "posterior draws so its dimensions can be inferred from those ",
+            "instead. Skipping."
+          )
+          next
+        }
+        n_row <- as.integer(round(n_row))
+        n_col <- as.integer(round(n_col))
+
+        # Elements are named "name[i,j]" in column-major order (j outer,
+        # i inner), matching Stan's own parameter-naming convention, and
+        # matching how LongParameters() flattens the corresponding
+        # iterations x R x C array returned by rstan::extract().
         for (j in seq_len(n_col)) {
           for (i in seq_len(n_row)) {
             add_result(paste0(pname, "[", i, ",", j, "]"), pname,
@@ -1298,6 +1364,9 @@ quantile_fn <- function(dist, p, arg1, arg2, arg3 = NA_real_) {
 #'   \code{rstan::sampling(data = ...)}). Used to resolve prior arguments
 #'   or parameter bounds that reference named constants (e.g.
 #'   \code{normal(mu_prior, sigma_prior)}) rather than numeric literals.
+#'   A named constant that sizes a \code{vector}/\code{matrix} declaration
+#'   (e.g. \code{vector[K] beta}) can also be resolved from \code{stan_fit}
+#'   instead, if supplied - see \code{stan_fit} below.
 #' @param pars Optional vector of parameter names. If supplied, only
 #'   declarations matching these (exact matches, or the *base* name of a
 #'   vector/matrix parameter, e.g. \code{"beta"} for \code{"beta[1]"}) are
@@ -1307,6 +1376,15 @@ quantile_fn <- function(dist, p, arg1, arg2, arg3 = NA_real_) {
 #'   default) to parse and report on every parameter in the model, e.g.
 #'   when building a \code{df_priors} you intend to reuse across several
 #'   different \code{pars} subsets later.
+#' @param stan_fit Optional fitted Stan model (\code{rstan} or
+#'   \code{cmdstanr}). If a \code{vector}/\code{matrix} parameter's size
+#'   can't be resolved from a literal or from \code{data_list} (e.g. its
+#'   declared size is a data-block constant and \code{data_list} wasn't
+#'   given, or didn't include it), the size is instead inferred from this
+#'   fit's own posterior draws - Stan itself had to resolve the size to
+#'   produce them, so the fit is always a correct fallback source for it.
+#'   Left as \code{NULL} (the default), only \code{data_list} is used, and
+#'   an unresolved size falls back to the usual warn-and-skip behaviour.
 #'
 #' @return A tibble with columns \code{par, v_min, v_max, v_lwr, v_upr,
 #'   dist, arg1, arg2, arg3}, suitable for use as the \code{df_priors}
@@ -1403,7 +1481,7 @@ quantile_fn <- function(dist, p, arg1, arg2, arg3 = NA_real_) {
 #' # a ```{stan output.var = "wounds_model_2"} code chunk:
 #' df_priors2 <- Create_df_priors(wounds_model_2, data_list = list(mu_prior = 0))
 #' }
-Create_df_priors <- function(stan_code, data_list = NULL, pars = NULL) {
+Create_df_priors <- function(stan_code, data_list = NULL, pars = NULL, stan_fit = NULL) {
 
   # A caller who only wants a handful of parameters (the common case: a
   # `pars` subset headed straight for PriorPosteriorPlotStan()/
@@ -1476,11 +1554,24 @@ Create_df_priors <- function(stan_code, data_list = NULL, pars = NULL) {
     find_lkj_corr_map(transformed_parameters_block, generated_quantities_block)
   ))
 
-  df_params <- parse_parameters_block(parameters_block, data_list, pars_filter, lkj_corr_names)
+  # Fallback used only when a vector/matrix size can't be resolved from a
+  # literal or from 'data_list': ask the fit's own posterior draws instead
+  # (Stan itself had to resolve the size to produce them). NULL (the default,
+  # when no stan_fit is supplied) disables this path entirely, preserving
+  # prior behaviour.
+  size_resolver <- if (!is.null(stan_fit)) {
+    function(pname, kind) infer_size_from_fit(stan_fit, pname, kind)
+  } else {
+    NULL
+  }
+
+  df_params <- parse_parameters_block(parameters_block, data_list, pars_filter,
+    lkj_corr_names, size_resolver)
 
   if (!is.na(transformed_parameters_block)) {
     df_tp <- tryCatch(
-      parse_parameters_block(transformed_parameters_block, data_list, pars_filter, lkj_corr_names),
+      parse_parameters_block(transformed_parameters_block, data_list, pars_filter,
+        lkj_corr_names, size_resolver),
       error = function(e) NULL  # e.g. transformed parameters block has no
     )                           # supported declarations, only statements
     if (!is.null(df_tp)) {
@@ -1654,7 +1745,13 @@ Create_df_priors <- function(stan_code, data_list = NULL, pars = NULL) {
 #'   passed as `data =` when fitting - used to resolve a bound or prior
 #'   argument that references a data-block constant by name instead of a
 #'   literal number (e.g. \code{vector[K] beta;} needs `K`'s value to know
-#'   how many elements `beta` has).
+#'   how many elements `beta` has). If left \code{NULL} (or it doesn't
+#'   include the needed constant), a \code{vector}/\code{matrix} size is
+#'   instead inferred from \code{stan_fit}'s own posterior draws where
+#'   possible - Stan itself had to resolve the size to produce them - so
+#'   \code{data_list} is only strictly required for resolving a *prior's*
+#'   own named hyperparameter (e.g. \code{normal(mu_prior, sigma_prior)}),
+#'   which has no such fallback.
 #' @param ncol Number of columns in the panel grid. Left to arrange itself
 #'   into a roughly square grid if not given.
 #' @param nbins Number of histogram bins per panel (default 25).
@@ -1771,7 +1868,8 @@ PriorPosteriorPlot <- function(stan_fit, stan_code, pars = NULL, data_list = NUL
   # as a filter afterwards) so that any OTHER parameter in the model - one
   # nobody asked to plot - generates no warning at all, rather than a
   # warning about a parameter this call was never going to show.
-  df_priors <- Create_df_priors(stan_code, data_list = data_list, pars = pars)
+  df_priors <- Create_df_priors(stan_code, data_list = data_list, pars = pars,
+    stan_fit = stan_fit)
 
   if (is.null(pars)) {
     pars <- as.character(df_priors$par)

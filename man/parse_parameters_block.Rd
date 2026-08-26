@@ -10,7 +10,8 @@ parse_parameters_block(
   block,
   data_list = NULL,
   pars_filter = NULL,
-  skip_names = NULL
+  skip_names = NULL,
+  size_resolver = NULL
 )
 }
 \description{
