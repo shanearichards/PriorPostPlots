@@ -23,3 +23,4 @@ Probability density for the Laplace distribution.
 Laplace probability density function has two arguments, the mean (mu) and the decay rate (b), and is described by
 exp(-abs(x - mu) / b) / (2 * b).
 }
+\keyword{internal}

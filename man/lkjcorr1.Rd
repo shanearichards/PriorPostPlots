@@ -48,3 +48,4 @@ are that marginal's density, CDF, quantile function, and random-draw
 generator, expressed in terms of Stan's own \code{eta} and \code{K}
 rather than the Beta distribution's \code{alpha} directly.
 }
+\keyword{internal}

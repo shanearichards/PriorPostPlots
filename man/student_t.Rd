@@ -44,3 +44,4 @@ standard (location 0, scale 1) Student-t distribution. Stan's
 \code{rstudent_t()} implement that three-argument form directly, via the
 standard location-scale transform (\code{(x - mu) / sigma}).
 }
+\keyword{internal}

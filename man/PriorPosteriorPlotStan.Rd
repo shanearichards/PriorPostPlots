@@ -54,3 +54,4 @@ PriorPosteriorPlotStan(stan_fit, pars, df_priors) # rstan fit
 # PriorPosteriorPlotStan(fit, pars, df_priors)
 }
 }
+\keyword{internal}

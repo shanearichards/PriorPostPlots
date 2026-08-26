@@ -1,10 +1,10 @@
 Package: PriorPostPlots
 Title: Prior-posterior plots for Stan models
-Version: 0.2.0
-Authors@R: 
+Version: 0.3.0
+Authors@R:
     person(given = "Shane", family = "Richards", email = "shane.richards@utas.edu.au", role = c("aut", "cre"),
            comment = c(ORCID = "0000-0002-9638-5827"))
-Description: Generates a ggplot comparing prior and posterior distributions by combining sampling output from a Stan model with a data frame specifying the prior distributions for selected model parameters.
+Description: Compares a Stan model's priors against its fitted posteriors. Given a fitted Stan model (rstan or cmdstanr) and the Stan code it was fitted from, PriorPosteriorPlot() reads the priors and hard bounds directly out of the Stan code and produces one prior-vs-posterior panel per parameter, as a visual check that the data - not just the priors - are driving the model's conclusions.
 License: MIT + file LICENSE
 Encoding: UTF-8
 Roxygen: list(markdown = TRUE)

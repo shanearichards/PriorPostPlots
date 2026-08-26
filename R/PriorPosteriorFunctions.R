@@ -19,7 +19,7 @@ utils::globalVariables(c("par", "x", "y", "f", "val", "density"))
 #' Laplace probability density function has two arguments, the mean (mu) and the decay rate (b), and is described by
 #'  exp(-abs(x - mu) / b) / (2 * b).
 #'
-#' @export
+#' @keywords internal
 dlaplace <- function(x, mu = 0, b = 1) {
   return(1 / (2 * b) * exp(-abs(x - mu) / b))
 }
@@ -38,7 +38,7 @@ dlaplace <- function(x, mu = 0, b = 1) {
 #' Laplace probability density function has two arguments, the mean (mu) and the decay rate (b), and is described by
 #'  exp(-abs(x - mu) / b) / (2 * b).
 #'
-#' @export
+#' @keywords internal
 plaplace <- function(x, mu = 0, b = 1) {
   ifelse(x < mu,
     0.5 * exp((x - mu) / b),
@@ -59,7 +59,7 @@ plaplace <- function(x, mu = 0, b = 1) {
 #' Laplace probability density function has two arguments, the mean (mu) and the decay rate (b), and is described by
 #'  exp(-abs(x - mu) / b) / (2 * b).
 #'
-#' @export
+#' @keywords internal
 rlaplace <- function(n, mu = 0, b = 1) {
   u <- stats::runif(n, min = -0.5, max = 0.5)
   return(mu - b * sign(u) * log(1 - 2 * abs(u)))
@@ -93,31 +93,32 @@ rlaplace <- function(n, mu = 0, b = 1) {
 #'   (\code{plkjcorr1}), quantiles (\code{qlkjcorr1}), or random draws
 #'   (\code{rlkjcorr1}).
 #' @name lkjcorr1
+#' @keywords internal
 NULL
 
 #' @rdname lkjcorr1
-#' @export
+#' @keywords internal
 dlkjcorr1 <- function(x, eta, K) {
   alpha <- eta + (K - 2) / 2
   stats::dbeta((x + 1) / 2, alpha, alpha) / 2
 }
 
 #' @rdname lkjcorr1
-#' @export
+#' @keywords internal
 plkjcorr1 <- function(q, eta, K) {
   alpha <- eta + (K - 2) / 2
   stats::pbeta((q + 1) / 2, alpha, alpha)
 }
 
 #' @rdname lkjcorr1
-#' @export
+#' @keywords internal
 qlkjcorr1 <- function(p, eta, K) {
   alpha <- eta + (K - 2) / 2
   2 * stats::qbeta(p, alpha, alpha) - 1
 }
 
 #' @rdname lkjcorr1
-#' @export
+#' @keywords internal
 rlkjcorr1 <- function(n, eta, K) {
   alpha <- eta + (K - 2) / 2
   2 * stats::rbeta(n, alpha, alpha) - 1
@@ -146,28 +147,29 @@ rlkjcorr1 <- function(n, eta, K) {
 #'   (\code{pstudent_t}), quantiles (\code{qstudent_t}), or random draws
 #'   (\code{rstudent_t}).
 #' @name student_t
+#' @keywords internal
 NULL
 
 #' @rdname student_t
-#' @export
+#' @keywords internal
 dstudent_t <- function(x, nu, mu = 0, sigma = 1) {
   stats::dt((x - mu) / sigma, nu) / sigma
 }
 
 #' @rdname student_t
-#' @export
+#' @keywords internal
 pstudent_t <- function(q, nu, mu = 0, sigma = 1) {
   stats::pt((q - mu) / sigma, nu)
 }
 
 #' @rdname student_t
-#' @export
+#' @keywords internal
 qstudent_t <- function(p, nu, mu = 0, sigma = 1) {
   mu + sigma * stats::qt(p, nu)
 }
 
 #' @rdname student_t
-#' @export
+#' @keywords internal
 rstudent_t <- function(n, nu, mu = 0, sigma = 1) {
   mu + sigma * stats::rt(n, nu)
 }
@@ -386,7 +388,7 @@ extract_posterior_list <- function(stan_fit, base_pars) {
 #'  Laplace has two arguments, the mean (mu) and the decay rate (b), and is described by
 #'  exp(-abs(x - mu) / b) / (2 * b).
 #'
-#' @export
+#' @keywords internal
 #'
 #' @examples
 #' \dontrun{
@@ -1376,7 +1378,7 @@ quantile_fn <- function(dist, p, arg1, arg2, arg3 = NA_real_) {
 #' it in the meantime, since Stan itself never samples anything on the
 #' interpretable correlation scale in that case.
 #'
-#' @export
+#' @keywords internal
 #'
 #' @examples
 #' \dontrun{
@@ -1611,65 +1613,157 @@ Create_df_priors <- function(stan_code, data_list = NULL, pars = NULL) {
 }
 
 
-#' Generate a prior-posterior plot directly from Stan code and a stanfit object
+#' Compare a Stan model's priors against its fitted posteriors
 #'
 #' @description
-#' Convenience wrapper around \code{Create_df_priors()} and
-#' \code{PriorPosteriorPlotStan()}: it parses \code{df_priors} directly from
-#' the supplied Stan code and immediately produces the prior-posterior plot,
-#' so there is no need to call \code{Create_df_priors()} separately first.
+#' A visual check that your data - not just your priors - are driving your
+#' conclusions. Give it a fitted Stan model and the Stan code it was fitted
+#' from, and it produces one panel per parameter: a shaded curve for the
+#' prior, and a histogram for the posterior draws, on the same axis. If the
+#' histogram sits comfortably inside the shaded region, your prior is doing
+#' little work; if it's pushed hard against the edge, the prior may be
+#' worth reconsidering.
 #'
-#' @param stan_fit A fitted Stan model: either an object returned by
-#'   \code{rstan::sampling()}/\code{rstan::stan()}, or a \code{cmdstanr} fit
-#'   object (or anything else exposing a \code{$draws()} method - see
-#'   \code{extract_posterior_list()}). This supplies the posterior samples;
-#'   it is distinct from \code{stan_code}, which supplies the parameter
-#'   bounds and priors and does not itself contain samples.
-#' @param stan_code A file path to a .stan file, a character string/vector
-#'   containing Stan code, or a compiled \code{stanmodel} object. See
-#'   \code{Create_df_priors()} for details on what is parsed from this.
-#' @param pars A vector of parameter names to plot. Entries may be exact
-#'   \code{df_priors$par} values (e.g. a scalar parameter, or an already
-#'   bracket-indexed element like \code{"etaR[1]"}), or the *base* name of
-#'   a vector/matrix parameter (e.g. \code{"etaR"}, \code{"beta_genus"}),
-#'   which expands to all of that parameter's elements automatically. This
-#'   is also forwarded into \code{Create_df_priors()}, so any OTHER
-#'   parameter in \code{stan_code} - one this call was never going to plot -
-#'   generates no warning even if it has an unsupported type or prior; see
-#'   \code{Create_df_priors()}'s own \code{pars} argument. If omitted
-#'   (\code{NULL}, the default), every parameter identified by
-#'   \code{Create_df_priors()} from \code{stan_code} is plotted (and
-#'   warned about, if unsupported) -- note this means only the parameter
-#'   types \code{Create_df_priors()} recognises (see its documentation for
-#'   the current limitations).
-#' @param data_list Optional named list (e.g. the same list passed to
-#'   \code{rstan::sampling(data = ...)}), used to resolve prior arguments or
-#'   parameter bounds that reference named constants rather than numeric
-#'   literals. See \code{Create_df_priors()}.
-#' @param ncol Number of columns provided to facet_wrap. Square arrangement
-#'   is produced when no value is provided.
-#' @param nbins Number of bins used to display histograms (default is 25).
+#' This is the only function you need: it reads the priors straight out of
+#' your Stan code and the posterior draws straight out of your fitted
+#' model, with no intermediate data frame to build by hand.
 #'
-#' @return A ggplot object.
+#' @param stan_fit The fitted model. Either an object from
+#'   \code{rstan::sampling()}/\code{rstan::stan()}, a \code{cmdstanr} fit
+#'   (e.g. from \code{cmdstanr::cmdstan_model()$sample()}), or anything else
+#'   with a \code{$draws(variables = ..., format = "matrix")} method. This
+#'   supplies the posterior samples; \code{stan_code} below is a separate
+#'   argument because the samples alone don't say what the priors were.
+#' @param stan_code The model that was fitted: a file path to a \code{.stan}
+#'   file, a character string/vector of Stan code, or a compiled
+#'   \code{stanmodel} object. Its \code{parameters} block (bounds) and
+#'   \code{model} block (\code{~} sampling statements) are read directly -
+#'   there is nothing else to prepare.
+#' @param pars Which parameters to plot, as a character vector. An entry
+#'   can be an exact element (\code{"sigma"}, or an indexed element of a
+#'   vector/matrix/correlation-matrix parameter like \code{"beta[1]"} or
+#'   \code{"Corr_block[1,2]"}), or a *base* name (\code{"beta"}), which
+#'   expands to every one of that parameter's elements automatically - so
+#'   a \code{vector[10]} never needs to be listed ten times. Leave as
+#'   \code{NULL} (the default) to plot every parameter this function
+#'   recognises in \code{stan_code}. Restricting \code{pars} also keeps
+#'   the Stan-code parser quiet about any *other* parameter in the model
+#'   (an unsupported type, an unusual prior) that you were never asking
+#'   about in the first place.
+#' @param data_list Optional named list - typically the same list you
+#'   passed as `data =` when fitting - used to resolve a bound or prior
+#'   argument that references a data-block constant by name instead of a
+#'   literal number (e.g. \code{vector[K] beta;} needs `K`'s value to know
+#'   how many elements `beta` has).
+#' @param ncol Number of columns in the panel grid. Left to arrange itself
+#'   into a roughly square grid if not given.
+#' @param nbins Number of histogram bins per panel (default 25).
+#'
+#' @return A \code{ggplot} object - print it to display, or add further
+#'   \code{ggplot2} layers/theming to it as usual.
 #'
 #' @details
-#' This function performs no plotting logic of its own -- it simply calls
-#' \code{Create_df_priors(stan_code, data_list)} to build \code{df_priors},
-#' then passes it straight to \code{PriorPosteriorPlotStan()}. Use
-#' \code{Create_df_priors()} and \code{PriorPosteriorPlotStan()} directly
-#' instead if you need to inspect or edit \code{df_priors} (e.g. to
-#' override an auto-derived bound, or add a prior the parser couldn't
-#' detect) before plotting.
+#' # What can be plotted
+#'
+#' Scalar \code{real} parameters, and \code{vector}/\code{matrix}
+#' parameters (one panel per element), with whichever prior distribution
+#' their \code{~} sampling statement in the \code{model} block uses. The
+#' supported distributions, using Stan's own names and argument order, are:
+#'
+#' \itemize{
+#'   \item \code{normal(mu, sigma)}
+#'   \item \code{lognormal(mu, sigma)}
+#'   \item \code{exponential(rate)}
+#'   \item \code{gamma(shape, rate)}
+#'   \item \code{uniform(lower, upper)}
+#'   \item \code{double_exponential(mu, scale)} (the Laplace distribution)
+#'   \item \code{beta(shape1, shape2)}
+#'   \item \code{cauchy(mu, sigma)}
+#'   \item \code{student_t(nu, mu, sigma)}
+#' }
+#'
+#' A hard bound declared on the parameter itself (\code{real<lower=0>},
+#' \code{real<lower=0, upper=1>}, ...) is detected automatically and drawn
+#' as a genuine cliff-edge in the prior, not just a display cutoff - a
+#' \code{normal} or \code{cauchy} truncated at \code{<lower=0>} renders as
+#' the familiar half-normal/half-Cauchy shape. If a parameter has hard
+#' bounds on both sides but no explicit \code{~} statement, Stan's own
+#' implicit uniform prior over that range is drawn automatically. A
+#' parameter with no prior and no hard bounds gets no ribbon, since there
+#' is nothing to draw.
+#'
+#' \code{cholesky_factor_corr[K]} parameters (declared for a correlated
+#' set of random effects, with an \code{L ~ lkj_corr_cholesky(eta);}
+#' prior) are handled specially: the raw Cholesky factor's own entries
+#' aren't individually meaningful, so instead this plots each of its
+#' \code{K*(K-1)/2} pairwise correlations, using the known closed-form
+#' distribution a single correlation follows under an LKJ prior. This
+#' needs your Stan code to also compute the actual correlation matrix
+#' somewhere (\code{transformed parameters} or \code{generated
+#' quantities}), via the standard idiom
+#' \code{corr_matrix[K] Corr_L = multiply_lower_tri_self_transpose(L);} -
+#' if that line is missing, a warning tells you exactly what to add.
+#'
+#' # Where the plotted range comes from
+#'
+#' Each panel's x-axis spans the prior's own central 95% interval (or a
+#' true hard bound, where one exists), widened as far as needed to also
+#' cover every posterior draw and every histogram bar - so the two are
+#' always shown on a common, honestly-scaled axis rather than one
+#' appearing to spill off the edge of the other.
 #'
 #' @export
 #'
 #' @examples
-#' \dontrun{
-#' pars <- c("ymin", "r_F", "r_M", "aStar_F", "aStar_M")
-#' PriorPosteriorPlot(stan_fit, "wounds_2.stan", pars)
+#' # A small worked example using simulated posterior draws, so it runs
+#' # immediately with no Stan installation required. In real use,
+#' # `stan_fit` is the object returned by fitting `stan_code` (e.g. via
+#' # cmdstanr::cmdstan_model(write_stan_file(stan_code))$sample()) - see
+#' # the second example below.
+#' stan_code <- "
+#' parameters {
+#'   real mu;
+#'   real<lower=0> sigma;
+#'   vector[2] beta;
+#' }
+#' model {
+#'   mu ~ normal(0, 5);
+#'   sigma ~ cauchy(0, 2);
+#'   beta ~ student_t(4, 0, 2);
+#' }
+#' "
 #'
-#' # omit pars to plot every parameter Create_df_priors() could identify
-#' PriorPosteriorPlot(stan_fit, "wounds_2.stan")
+#' set.seed(1)
+#' n_draws <- 1000
+#' draws <- cbind(
+#'   mu       = rnorm(n_draws, 2, 0.5),        # data pulls mu well away from 0
+#'   sigma    = abs(rnorm(n_draws, 0.5, 0.1)),
+#'   `beta[1]` = rnorm(n_draws, 0, 1.8),        # close to its prior - weakly informed
+#'   `beta[2]` = rnorm(n_draws, -3, 0.4)        # far from its prior - strongly informed
+#' )
+#' # a minimal stand-in for a real cmdstanr fit's $draws() method: given a
+#' # base name like "beta", a real fit returns every "beta[i]" column too
+#' mock_fit <- list(draws = function(variables, format = "matrix") {
+#'   cols <- unlist(lapply(variables, function(v) {
+#'     grep(paste0("^", v, "(\\[|$)"), colnames(draws), value = TRUE)
+#'   }))
+#'   draws[, cols, drop = FALSE]
+#' })
+#'
+#' PriorPosteriorPlot(mock_fit, stan_code)
+#'
+#' \dontrun{
+#' # Real usage: stan_fit is an actual fitted model, and stan_code points
+#' # at the .stan file it was fitted from.
+#' library(cmdstanr)
+#' mod <- cmdstan_model("my_model.stan")
+#' fit <- mod$sample(data = my_data)
+#' PriorPosteriorPlot(fit, "my_model.stan")
+#'
+#' # Restrict to specific parameters, and resolve a data-block constant
+#' # (here, K) referenced in a vector/matrix declaration's size:
+#' PriorPosteriorPlot(fit, "my_model.stan", pars = c("beta", "sigma"),
+#'                     data_list = my_data)
 #' }
 PriorPosteriorPlot <- function(stan_fit, stan_code, pars = NULL, data_list = NULL,
                                 ncol = NA, nbins = 25) {

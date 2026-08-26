@@ -130,3 +130,4 @@ df_priors <- Create_df_priors(stan_code, data_list = list(mu_prior = 0))
 df_priors2 <- Create_df_priors(wounds_model_2, data_list = list(mu_prior = 0))
 }
 }
+\keyword{internal}
