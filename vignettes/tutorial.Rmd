@@ -148,6 +148,57 @@ mock_fit <- list(draws = function(variables, format = "matrix") draws[, variable
 PriorPosteriorPlot(mock_fit, stan_code)
 ```
 
+## When you need `data_list`
+
+Stan models often size a `vector` or `matrix` using a named constant declared in the `data` block,
+rather than a literal number:
+
+```stan
+data {
+  int<lower=1> K;
+}
+parameters {
+  vector[K] beta;
+}
+```
+
+`PriorPosteriorPlot()` only ever reads the Stan *code* as text - it has no way to know what `K`
+actually equals, so it can't tell how many `beta[...]` panels to draw. `data_list` is the fix: pass
+it the same named list of data you gave to `mod$sample(data = ...)` (or `rstan::stan(data = ...)`),
+and any bound or prior argument written as a name rather than a literal number is resolved from it.
+It doesn't need to be the *complete* data list you fit with - just enough of it to resolve whatever
+named constants the code actually references.
+
+```{r}
+stan_code <- "
+data {
+  int<lower=1> K;
+}
+parameters {
+  vector[K] beta;
+}
+model {
+  beta ~ normal(0, 1);
+}
+"
+
+set.seed(4)
+draws <- matrix(rnorm(3000, 0, 1), ncol = 3, dimnames = list(NULL, paste0("beta[", 1:3, "]")))
+mock_fit <- list(draws = function(variables, format = "matrix") {
+  cols <- unlist(lapply(variables, function(v) grep(paste0("^", v, "(\\[|$)"), colnames(draws), value = TRUE)))
+  draws[, cols, drop = FALSE]
+})
+
+PriorPosteriorPlot(mock_fit, stan_code, data_list = list(K = 3))
+```
+
+Leaving out `data_list` here wouldn't just produce a slightly wrong plot - since `K` can't be
+resolved, `PriorPosteriorPlot()` can't tell how many elements `beta` has, so it drops `beta`
+entirely and (since it's the only parameter in this small example) ends up with nothing left to
+plot at all. In a bigger model, an unresolved size just quietly drops that one parameter while
+everything else still plots - either way, a warning names exactly which parameter and which
+constant it couldn't resolve, so it's easy to spot.
+
 ## Supported priors, at a glance
 
 | Stan syntax | Notes |
@@ -194,8 +245,8 @@ PriorPosteriorPlot(fit, fit@stanmodel)
 # a cmdstanr fit can hand back its own Stan code the same way:
 PriorPosteriorPlot(fit, fit$code())
 
-# restrict to specific parameters, and resolve a data-block constant
-# (here, K) referenced in a vector/matrix declaration's size
+# restrict to specific parameters (see "When you need data_list" above
+# for what a data_list is for and what it needs to contain)
 PriorPosteriorPlot(fit, "my_model.stan", pars = c("beta", "sigma"),
                     data_list = my_data)
 ```
