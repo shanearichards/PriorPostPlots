@@ -2,13 +2,23 @@
 % Please edit documentation in R/PriorPosteriorFunctions.R
 \name{resolve_numeric}
 \alias{resolve_numeric}
-\title{Try to resolve a Stan expression (e.g. "0.5" or "sigma_prior") to a
-number, optionally looking it up in a supplied data list.}
+\title{Try to resolve a Stan expression (e.g. "0.5", "sigma_prior", or
+"log(0.5)") to a number: first as a bare numeric literal, then as a
+name looked up in \code{data_list}, and finally - for anything else, e.g. a
+function call or arithmetic expression using syntax common to both
+Stan and R (\code{log(0.5)}, \code{1/2}, \code{sqrt(2)}) - by evaluating it as an R
+expression, with any \code{data_list} entries available as named values
+inside that expression too (e.g. \code{normal(0, 2 * sigma_prior)}).}
 \usage{
 resolve_numeric(x, data_list = NULL, par_name = NULL)
 }
 \description{
-Try to resolve a Stan expression (e.g. "0.5" or "sigma_prior") to a
-number, optionally looking it up in a supplied data list.
+Try to resolve a Stan expression (e.g. "0.5", "sigma_prior", or
+"log(0.5)") to a number: first as a bare numeric literal, then as a
+name looked up in \code{data_list}, and finally - for anything else, e.g. a
+function call or arithmetic expression using syntax common to both
+Stan and R (\code{log(0.5)}, \code{1/2}, \code{sqrt(2)}) - by evaluating it as an R
+expression, with any \code{data_list} entries available as named values
+inside that expression too (e.g. \code{normal(0, 2 * sigma_prior)}).
 }
 \keyword{internal}

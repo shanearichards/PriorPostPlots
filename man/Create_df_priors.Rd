@@ -51,10 +51,19 @@ rather than a literal (e.g. \code{vector[K] beta} or
 \code{matrix[R, C] beta_genus}), pass its value via \code{data_list}.
 
 A vectorized sampling statement (e.g. \code{beta ~ normal(0, 5);}) is
-applied to every element of that vector. Per-element statements written
-inside a loop (e.g. \code{beta[i] ~ normal(0, 5);}) are \strong{not}
-detected -- such parameters fall back to having no prior detected
-(or an implicit uniform prior, if both bounds are hard-coded).
+applied to every element of that vector. A per-element statement with a
+\emph{literal} index (e.g. \code{beta[1] ~ normal(0.4, 1); beta[2] ~
+normal(-0.9, 1);}) is also detected and takes precedence, for that
+element, over any vectorized statement on the same parameter. A
+statement indexed by a \code{for}-loop variable (e.g. \code{for (i in
+1:N) beta[i] ~ normal(0, sigma);}) is \strong{not} detected -- such
+parameters fall back to having no prior detected (or an implicit
+uniform prior, if both bounds are hard-coded). Sampling-statement
+arguments may themselves contain nested function calls or further
+parentheses (e.g. \code{normal(log(0.5), 0.75)}); these are resolved
+correctly (\code{log(0.5)} is evaluated as an R expression once
+extracted intact) rather than truncated at the first closing
+parenthesis.
 
 If a parameter has no \code{~} sampling statement in the model block (e.g.
 its prior is specified via \verb{target += ..._lpdf(...)}, or it genuinely

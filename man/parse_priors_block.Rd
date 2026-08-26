@@ -3,17 +3,40 @@
 \name{parse_priors_block}
 \alias{parse_priors_block}
 \title{Parse the model block for \code{par ~ dist(args);} sampling statements
-associated with the supplied parameter names. Also recognises the
-\code{to_vector(par) ~ dist(args);} idiom commonly used to put a vectorized
-prior on a whole \code{matrix} parameter -- \code{to_vector(...)} is stripped and
-\code{par} is treated exactly as if it had been written bare on the LHS
-(i.e. the prior is applied to every expanded element of \code{par}).}
+associated with the supplied parameter names. Recognises three LHS
+forms: a bare vectorized statement (\code{par ~ dist(args);}, applied to
+every expanded element of \code{par}); the \code{to_vector(par) ~ dist(args);}
+idiom commonly used to put a vectorized prior on a whole \code{matrix}
+parameter (handled the same way as a bare vectorized statement); and a
+per-element statement with a literal index (\code{par[1] ~ dist(args);} for
+a \code{vector} element, \code{par[1,2] ~ dist(args);} for a \code{matrix} element) -
+if both a per-element and a vectorized statement exist for the same
+base parameter, the per-element one takes precedence for that specific
+element (resolved in \code{Create_df_priors()}, which looks up each
+expanded element's own indexed name before falling back to its base
+name).}
 \usage{
 parse_priors_block(block, par_names)
 }
 \description{
+The argument list itself is extracted with \code{find_matching_paren()}
+rather than a single-level \code{"\\\\\\\\(([^)]*)\\\\\\\\)"} regex capture, and then
+split into individual arguments with \code{split_args_respecting_parens()}
+rather than a plain \code{strsplit(..., ",")} - both are parenthesis-depth
+aware, so an argument that is itself a function call (e.g. the
+\code{log(0.5)} in \code{normal(log(0.5), 0.75)}) doesn't truncate/corrupt the
+rest of the argument list (a plain, depth-unaware capture stops at the
+FIRST \verb{)}, which closes the nested call rather than the sampling
+statement itself).
+
+[^)]: R:\%5E)
+}
+\details{
 Note: this does not (yet) detect priors specified via target +=
-\emph{_lpdf(...)/}_lpmf(...) syntax, nor does it adjust for truncation
-(\code{T[lower, upper]}) -- these fall back to "no prior" (dist = NA).
+\emph{_lpdf(...)/}_lpmf(...) syntax, priors written with a \code{for}-loop
+variable as the index (\code{for (i in 1:N) par[i] ~ normal(0, sigma);}  -
+only a \emph{literal} index like \code{par[1]} is recognised, not a loop
+variable), nor does it adjust for truncation (\code{T[lower, upper]}) -
+these fall back to "no prior" (dist = NA).
 }
 \keyword{internal}

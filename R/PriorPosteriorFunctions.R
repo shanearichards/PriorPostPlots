@@ -356,8 +356,13 @@ extract_block <- function(code, block_name) {
   substr(code, brace_start + 1, end - 1)
 }
 
-#' Try to resolve a Stan expression (e.g. "0.5" or "sigma_prior") to a
-#' number, optionally looking it up in a supplied data list.
+#' Try to resolve a Stan expression (e.g. "0.5", "sigma_prior", or
+#' "log(0.5)") to a number: first as a bare numeric literal, then as a
+#' name looked up in `data_list`, and finally - for anything else, e.g. a
+#' function call or arithmetic expression using syntax common to both
+#' Stan and R (`log(0.5)`, `1/2`, `sqrt(2)`) - by evaluating it as an R
+#' expression, with any `data_list` entries available as named values
+#' inside that expression too (e.g. `normal(0, 2 * sigma_prior)`).
 #' @keywords internal
 resolve_numeric <- function(x, data_list = NULL, par_name = NULL) {
   x <- trimws(x)
@@ -369,11 +374,18 @@ resolve_numeric <- function(x, data_list = NULL, par_name = NULL) {
     if (!is.na(val)) return(val)
   }
 
+  val <- tryCatch({
+    env <- list2env(if (is.null(data_list)) list() else data_list, parent = baseenv())
+    result <- eval(parse(text = x), envir = env)
+    if (is.numeric(result) && length(result) == 1) result else NA_real_
+  }, error = function(e) NA_real_)
+  if (!is.na(val)) return(val)
+
   warning(
     "Could not resolve value '", x, "'",
     if (!is.null(par_name)) paste0(" for parameter '", par_name, "'") else "",
-    " to a number (it is not a literal and was not found in 'data_list'). ",
-    "Setting to NA."
+    " to a number (it is not a literal, a 'data_list' entry, or a ",
+    "resolvable numeric expression). Setting to NA."
   )
   NA_real_
 }
@@ -529,37 +541,124 @@ parse_parameters_block <- function(block, data_list = NULL) {
   df
 }
 
+#' Find the position of the `)` matching the `(` at `open_pos` in `text`,
+#' by scanning forward and tracking parenthesis depth. Handles arbitrary
+#' nesting (e.g. the `)` closing `normal(log(0.5), 0.75)`'s outer call).
+#' Returns `NA` if the parentheses from `open_pos` onward are unbalanced.
+#' @keywords internal
+find_matching_paren <- function(text, open_pos) {
+  chars <- strsplit(substr(text, open_pos, nchar(text)), "")[[1]]
+  depth <- 0L
+  for (i in seq_along(chars)) {
+    if (chars[i] == "(") {
+      depth <- depth + 1L
+    } else if (chars[i] == ")") {
+      depth <- depth - 1L
+      if (depth == 0L) return(open_pos + i - 1L)
+    }
+  }
+  NA_integer_
+}
+
+#' Split a Stan sampling-statement argument list on top-level commas only
+#' (i.e. commas not nested inside a further `(...)`), so an argument that
+#' is itself a function call with its own comma-separated arguments (e.g.
+#' a 2-argument nested call) is kept intact rather than being split at
+#' that inner comma.
+#' @keywords internal
+split_args_respecting_parens <- function(args_str) {
+  chars <- strsplit(args_str, "")[[1]]
+  depth <- 0L
+  piece_start <- 1L
+  pieces <- character(0)
+  for (i in seq_along(chars)) {
+    if (chars[i] == "(") {
+      depth <- depth + 1L
+    } else if (chars[i] == ")") {
+      depth <- depth - 1L
+    } else if (chars[i] == "," && depth == 0L) {
+      pieces <- c(pieces, substr(args_str, piece_start, i - 1L))
+      piece_start <- i + 1L
+    }
+  }
+  pieces <- c(pieces, substr(args_str, piece_start, nchar(args_str)))
+  trimws(pieces)
+}
+
 #' Parse the model block for `par ~ dist(args);` sampling statements
-#' associated with the supplied parameter names. Also recognises the
-#' `to_vector(par) ~ dist(args);` idiom commonly used to put a vectorized
-#' prior on a whole `matrix` parameter -- `to_vector(...)` is stripped and
-#' `par` is treated exactly as if it had been written bare on the LHS
-#' (i.e. the prior is applied to every expanded element of `par`).
+#' associated with the supplied parameter names. Recognises three LHS
+#' forms: a bare vectorized statement (`par ~ dist(args);`, applied to
+#' every expanded element of `par`); the `to_vector(par) ~ dist(args);`
+#' idiom commonly used to put a vectorized prior on a whole `matrix`
+#' parameter (handled the same way as a bare vectorized statement); and a
+#' per-element statement with a literal index (`par[1] ~ dist(args);` for
+#' a `vector` element, `par[1,2] ~ dist(args);` for a `matrix` element) -
+#' if both a per-element and a vectorized statement exist for the same
+#' base parameter, the per-element one takes precedence for that specific
+#' element (resolved in `Create_df_priors()`, which looks up each
+#' expanded element's own indexed name before falling back to its base
+#' name).
+#'
+#' The argument list itself is extracted with `find_matching_paren()`
+#' rather than a single-level `"\\\\(([^)]*)\\\\)"` regex capture, and then
+#' split into individual arguments with `split_args_respecting_parens()`
+#' rather than a plain `strsplit(..., ",")` - both are parenthesis-depth
+#' aware, so an argument that is itself a function call (e.g. the
+#' `log(0.5)` in `normal(log(0.5), 0.75)`) doesn't truncate/corrupt the
+#' rest of the argument list (a plain, depth-unaware capture stops at the
+#' FIRST `)`, which closes the nested call rather than the sampling
+#' statement itself).
 #'
 #' Note: this does not (yet) detect priors specified via target +=
-#' *_lpdf(...)/*_lpmf(...) syntax, nor does it adjust for truncation
-#' (`T[lower, upper]`) -- these fall back to "no prior" (dist = NA).
+#' *_lpdf(...)/*_lpmf(...) syntax, priors written with a `for`-loop
+#' variable as the index (`for (i in 1:N) par[i] ~ normal(0, sigma);`  -
+#' only a *literal* index like `par[1]` is recognised, not a loop
+#' variable), nor does it adjust for truncation (`T[lower, upper]`) -
+#' these fall back to "no prior" (dist = NA).
 #' @keywords internal
 parse_priors_block <- function(block, par_names) {
+  # Matches the LHS + distribution name + opening "(" of a sampling
+  # statement only, stopping right after that "(" - see the argument-
+  # extraction comment above for why the argument list itself is found
+  # separately, not as part of this regex.
   pattern <- paste0(
     "(?:to_vector\\(\\s*([A-Za-z_][A-Za-z0-9_]*)\\s*\\)|",
-    "([A-Za-z_][A-Za-z0-9_]*))",
-    "\\s*~\\s*([A-Za-z_][A-Za-z0-9_]*)\\s*\\(([^)]*)\\)"
+    "([A-Za-z_][A-Za-z0-9_]*)(\\[\\s*[0-9]+\\s*(?:,\\s*[0-9]+\\s*)?\\])?)",
+    "\\s*~\\s*([A-Za-z_][A-Za-z0-9_]*)\\s*\\("
   )
   m <- gregexpr(pattern, block, perl = TRUE)
-  matches <- regmatches(block, m)[[1]]
+  match_starts <- m[[1]]
+  if (match_starts[1] == -1) return(list())
+  match_lengths <- attr(m[[1]], "match.length")
 
   priors <- list()
 
-  for (mt in matches) {
+  for (k in seq_along(match_starts)) {
+    mt <- substr(block, match_starts[k], match_starts[k] + match_lengths[k] - 1)
     parts <- regmatches(mt, regexec(pattern, mt, perl = TRUE))[[1]]
-    pname     <- if (nzchar(parts[2])) parts[2] else parts[3]
-    dist_stan <- parts[4]
-    args_str  <- parts[5]
 
-    if (!(pname %in% par_names)) next
+    if (nzchar(parts[2])) {
+      # to_vector(par) ~ dist(...) - applies to every element of `par`
+      pname <- parts[2]
+      base  <- parts[2]
+    } else {
+      base  <- parts[3]
+      index <- gsub("\\s+", "", parts[4])  # "" (bare/vectorized), "[i]" or "[i,j]"
+      pname <- paste0(base, index)
+    }
+    dist_stan <- parts[5]
 
-    args <- trimws(strsplit(args_str, ",")[[1]])
+    if (!(base %in% par_names)) next
+
+    # The match above ends right after the distribution's opening "(";
+    # walk forward from there tracking parenthesis depth to find its
+    # TRUE matching close, so e.g. "log(0.5)" as an argument survives
+    # intact instead of truncating the match at its own closing paren.
+    open_pos  <- match_starts[k] + match_lengths[k] - 1
+    close_pos <- find_matching_paren(block, open_pos)
+    if (is.na(close_pos)) next  # unbalanced parens - malformed Stan code
+    args_str <- substr(block, open_pos + 1, close_pos - 1)
+    args <- split_args_respecting_parens(args_str)
 
     if (pname %in% names(priors)) {
       warning(
@@ -652,10 +751,19 @@ quantile_fn <- function(dist, p, arg1, arg2) {
 #' \code{matrix[R, C] beta_genus}), pass its value via \code{data_list}.
 #'
 #' A vectorized sampling statement (e.g. \code{beta ~ normal(0, 5);}) is
-#' applied to every element of that vector. Per-element statements written
-#' inside a loop (e.g. \code{beta[i] ~ normal(0, 5);}) are \strong{not}
-#' detected -- such parameters fall back to having no prior detected
-#' (or an implicit uniform prior, if both bounds are hard-coded).
+#' applied to every element of that vector. A per-element statement with a
+#' \emph{literal} index (e.g. \code{beta[1] ~ normal(0.4, 1); beta[2] ~
+#' normal(-0.9, 1);}) is also detected and takes precedence, for that
+#' element, over any vectorized statement on the same parameter. A
+#' statement indexed by a \code{for}-loop variable (e.g. \code{for (i in
+#' 1:N) beta[i] ~ normal(0, sigma);}) is \strong{not} detected -- such
+#' parameters fall back to having no prior detected (or an implicit
+#' uniform prior, if both bounds are hard-coded). Sampling-statement
+#' arguments may themselves contain nested function calls or further
+#' parentheses (e.g. \code{normal(log(0.5), 0.75)}); these are resolved
+#' correctly (\code{log(0.5)} is evaluated as an R expression once
+#' extracted intact) rather than truncated at the first closing
+#' parenthesis.
 #'
 #' If a parameter has no `~` sampling statement in the model block (e.g.
 #' its prior is specified via `target += ..._lpdf(...)`, or it genuinely
@@ -768,9 +876,13 @@ Create_df_priors <- function(stan_code, data_list = NULL) {
   }
 
   # ---- priors ----------------------------------------------------------
-  # priors are matched by 'base' name (e.g. "beta"), since a Stan
-  # vectorized sampling statement like `beta ~ normal(0, 5);` applies the
-  # same prior to every expanded element ("beta[1]", "beta[2]", ...).
+  # priors are returned keyed by whatever LHS parse_priors_block() found:
+  # a 'base' name (e.g. "beta") for a vectorized statement
+  # (`beta ~ normal(0, 5);`, applying the same prior to every expanded
+  # element "beta[1]", "beta[2]", ...), or a specific expanded element's
+  # own name (e.g. "beta[1]") for a per-element statement
+  # (`beta[1] ~ normal(...);`). Each row below looks up its own exact
+  # name first, falling back to the base name.
   priors <- parse_priors_block(model_block, unique(df_params$base))
 
   # ---- assemble one row per parameter (or per vector element) -------------
@@ -785,24 +897,27 @@ Create_df_priors <- function(stan_code, data_list = NULL) {
     arg1 <- NA_real_
     arg2 <- NA_real_
 
-    if (!is.null(priors[[base]])) {
-      dist_stan <- priors[[base]]$dist_stan
-      args      <- priors[[base]]$args
+    prior_entry <- priors[[pname]]
+    if (is.null(prior_entry)) prior_entry <- priors[[base]]
+
+    if (!is.null(prior_entry)) {
+      dist_stan <- prior_entry$dist_stan
+      args      <- prior_entry$args
 
       if (dist_stan %in% names(.dist_map)) {
         mapping <- .dist_map[[dist_stan]]
         dist <- mapping$dist
 
         if (length(args) >= 1 && nzchar(args[1])) {
-          arg1 <- resolve_numeric(args[1], data_list, base)
+          arg1 <- resolve_numeric(args[1], data_list, pname)
         }
         if (mapping$nargs == 2 && length(args) >= 2 && nzchar(args[2])) {
-          arg2 <- resolve_numeric(args[2], data_list, base)
+          arg2 <- resolve_numeric(args[2], data_list, pname)
         }
       } else {
         warning(
           "Unsupported prior distribution '", dist_stan, "' for parameter '",
-          base, "'; setting its prior to NA. Supported: ",
+          pname, "'; setting its prior to NA. Supported: ",
           paste(names(.dist_map), collapse = ", ")
         )
       }
