@@ -65,6 +65,64 @@ rlaplace <- function(n, mu = 0, b = 1) {
   return(mu - b * sign(u) * log(1 - 2 * abs(u)))
 }
 
+#' Marginal distribution of a single off-diagonal element of a
+#' correlation matrix under an LKJ prior
+#'
+#' @description
+#' Under Stan's \code{lkj_corr_cholesky(eta)} prior (equivalently
+#' \code{lkj_corr(eta)} on the correlation matrix \code{R} itself) in
+#' \code{K} dimensions, any single off-diagonal entry \code{R[i,j]}
+#' marginally follows a shifted, scaled Beta distribution on \code{(-1,
+#' 1)}: \code{(R[i,j] + 1) / 2 ~ Beta(alpha, alpha)} with
+#' \code{alpha = eta + (K - 2) / 2} (Lewandowski, Kurowicka & Joe, 2009).
+#' \code{dlkjcorr1()}/\code{plkjcorr1()}/\code{qlkjcorr1()}/\code{rlkjcorr1()}
+#' are that marginal's density, CDF, quantile function, and random-draw
+#' generator, expressed in terms of Stan's own \code{eta} and \code{K}
+#' rather than the Beta distribution's \code{alpha} directly.
+#'
+#' @param x,q vector of correlation values in \code{(-1, 1)}.
+#' @param p vector of probabilities.
+#' @param n number of observations.
+#' @param eta the \code{lkj_corr_cholesky()}/\code{lkj_corr()} shape
+#'   parameter as declared in the Stan model (\code{eta = 1} is uniform
+#'   over all valid correlation matrices; larger \code{eta} concentrates
+#'   more mass near 0, i.e. favours weaker correlation).
+#' @param K the dimension of the correlation matrix (\code{K >= 2}).
+#'
+#' @return Vector of densities (\code{dlkjcorr1}), probabilities
+#'   (\code{plkjcorr1}), quantiles (\code{qlkjcorr1}), or random draws
+#'   (\code{rlkjcorr1}).
+#' @name lkjcorr1
+NULL
+
+#' @rdname lkjcorr1
+#' @export
+dlkjcorr1 <- function(x, eta, K) {
+  alpha <- eta + (K - 2) / 2
+  stats::dbeta((x + 1) / 2, alpha, alpha) / 2
+}
+
+#' @rdname lkjcorr1
+#' @export
+plkjcorr1 <- function(q, eta, K) {
+  alpha <- eta + (K - 2) / 2
+  stats::pbeta((q + 1) / 2, alpha, alpha)
+}
+
+#' @rdname lkjcorr1
+#' @export
+qlkjcorr1 <- function(p, eta, K) {
+  alpha <- eta + (K - 2) / 2
+  2 * stats::qbeta(p, alpha, alpha) - 1
+}
+
+#' @rdname lkjcorr1
+#' @export
+rlkjcorr1 <- function(n, eta, K) {
+  alpha <- eta + (K - 2) / 2
+  2 * stats::rbeta(n, alpha, alpha) - 1
+}
+
 # convert list of posterior estimates into long format data frame
 LongParameters <- function(l_params, pars_use) {
 
@@ -134,6 +192,7 @@ PriorCurves <- function(df_param) {
       	laplace     = dlaplace(x_vals, mu = arg1, b = arg2),
       	uniform     = stats::dunif(x_vals, min = arg1, max = arg2),
       	beta        = stats::dbeta(x_vals, shape1 = arg1, shape2 = arg2),
+        lkj_corr    = dlkjcorr1(x_vals, eta = arg1, K = arg2),
         rep(NA, length(x_vals))
       )
 
@@ -152,6 +211,8 @@ PriorCurves <- function(df_param) {
           stats::punif(v_lwr, min = arg1, max = arg2),
         beta = stats::pbeta(v_upr, shape1 = arg1, shape2 = arg2) -
           stats::pbeta(v_lwr, shape1 = arg1, shape2 = arg2),
+        lkj_corr = plkjcorr1(v_upr, eta = arg1, K = arg2) -
+          plkjcorr1(v_lwr, eta = arg1, K = arg2),
         rep(NA, length(x_vals))
       )
 
@@ -255,14 +316,17 @@ extract_posterior_list <- function(stan_fit, base_pars) {
 #'
 #' @param stan_fit A fitted Stan model: either an object returned by \code{rstan::sampling()}/\code{rstan::stan()} (class \code{"stanfit"}), or a \code{cmdstanr} fit object (e.g. from \code{cmdstanr::cmdstan_model()$sample()}, class \code{"CmdStanMCMC"}/\code{"CmdStanFit"}) or anything else exposing the same \code{$draws(variables = ..., format = "matrix")} method. See \code{extract_posterior_list()} for exactly how each is handled.
 #' @param pars A vector of parameter names associated with the stan model for plotting. Entries may be exact \code{df_priors$par} values (e.g. a scalar parameter, or an already bracket-indexed element like \code{"etaR[1]"}), or the *base* name of a vector/matrix parameter (e.g. \code{"etaR"}, \code{"beta_genus"}), which expands to all of that parameter's elements as they appear in \code{df_priors} (e.g. \code{"etaR[1]"}, \code{"etaR[2]"}, \code{"etaR[3]"}) -- so elements don't need to be listed individually.
-#' @param df_priors A data frame containing information that describes the prior for each parameter. The data frame must have the columns par, dist, arg1, arg2, v_min, v_max, v_lwr, v_upr. par = parameter name, dist = prior distribution (normal, log_normal, exponential, gamma, uniform, laplace, beta), arg1 = first distribution parameter, arg2 = second distribution parameter (NA if not needed), v_min and v_max are the bounds of the plotted prior, v_lwr and v_upr are the stan-imposed parameter bounds (NA if none are set).
+#' @param df_priors A data frame containing information that describes the prior for each parameter. The data frame must have the columns par, dist, arg1, arg2, v_min, v_max, v_lwr, v_upr. par = parameter name, dist = prior distribution (normal, log_normal, exponential, gamma, uniform, laplace, beta, lkj_corr), arg1 = first distribution parameter, arg2 = second distribution parameter (NA if not needed; for lkj_corr, arg1 is eta and arg2 is K, the correlation matrix's dimension - see ?lkjcorr1), v_min and v_max are the bounds of the plotted prior, v_lwr and v_upr are the stan-imposed parameter bounds (NA if none are set).
 #' @param ncol Number of columns provided to facet_wrap. Square arrangement is produced when no value is provided.
 #' @param nbins Number of bins used to display histograms (default is 25).
 #'
 #' @return A ggplot object.
 #' @details
 #' Currently, the distributions allowed are uniform, normal, log_normal, exponential,
-#'  gamma, laplace and beta. See corresponding d-functions for arguments required.
+#'  gamma, laplace, beta, and lkj_corr (the marginal distribution of a single pairwise
+#'  correlation under an lkj_corr_cholesky() prior - see ?lkjcorr1 and
+#'  Create_df_priors()'s own documentation for how these rows get built). See
+#'  corresponding d-functions for arguments required.
 #'  Laplace has two arguments, the mean (mu) and the decay rate (b), and is described by
 #'  exp(-abs(x - mu) / b) / (2 * b).
 #'
@@ -604,13 +668,19 @@ resolve_numeric <- function(x, data_list = NULL, par_name = NULL) {
 #' `matrix[R, C]` parameters, and any hard lower/upper bounds declared on
 #' them.
 #' @keywords internal
-parse_parameters_block <- function(block, data_list = NULL, pars_filter = NULL) {
+parse_parameters_block <- function(block, data_list = NULL, pars_filter = NULL, skip_names = NULL) {
   statements <- strsplit(block, ";")[[1]]
   statements <- trimws(gsub("\\s+", " ", statements))
   statements <- statements[statements != ""]
 
+  # cholesky_factor_corr is deliberately NOT in this list: it's recognised
+  # and silently skipped here (no row, no warning) because it's handled by
+  # a separate pass, parse_lkj_priors(), which turns its
+  # lkj_corr_cholesky(eta) prior into one row per pairwise correlation
+  # instead of one row for the raw Cholesky factor itself (see that
+  # function's documentation for why).
   unsupported_types <- c("array", "int", "simplex",
-    "ordered", "positive_ordered", "row_vector", "cholesky_factor_corr",
+    "ordered", "positive_ordered", "row_vector",
     "cholesky_factor_cov", "corr_matrix", "cov_matrix", "unit_vector")
 
   # When the caller only wants a handful of parameters (e.g.
@@ -619,8 +689,17 @@ parse_parameters_block <- function(block, data_list = NULL, pars_filter = NULL) 
   # type-support check runs - so a model's other parameters (random-effect
   # z-scores, correlation Cholesky factors, etc.) generate no warnings at
   # all rather than warnings about parameters nobody asked to plot.
+  #
+  # `skip_names` is a second, unconditional skip list (irrespective of
+  # `pars_filter`): a `corr_matrix[K]` declared inside `transformed
+  # parameters` (rather than `generated quantities`) would otherwise be
+  # flagged here as an "unsupported type" even when it's one
+  # parse_lkj_priors() has already successfully matched to an
+  # lkj_corr_cholesky() prior and IS being plotted, just via that separate
+  # pass rather than this one.
   wanted <- function(candidate_names) {
-    is.null(pars_filter) || any(candidate_names %in% pars_filter)
+    (is.null(pars_filter) || any(candidate_names %in% pars_filter)) &&
+      !any(candidate_names %in% skip_names)
   }
 
   # Generic name extractor for declaration shapes this function doesn't
@@ -774,7 +853,15 @@ parse_parameters_block <- function(block, data_list = NULL, pars_filter = NULL) 
   }
 
   if (length(results) == 0) {
-    stop("No supported ('real', 'vector' or 'matrix') parameters were found in the block.")
+    # Not necessarily an error - a block can legitimately contain only a
+    # cholesky_factor_corr parameter (handled separately by
+    # parse_lkj_priors(), not here). Create_df_priors() checks the
+    # combined result of both passes for real emptiness.
+    return(data.frame(
+      par = character(0), base = character(0),
+      v_lwr = numeric(0), v_upr = numeric(0),
+      stringsAsFactors = FALSE
+    ))
   }
 
   df <- do.call(rbind, results)
@@ -915,6 +1002,178 @@ parse_priors_block <- function(block, par_names) {
   priors
 }
 
+#' Scan the `transformed parameters`/`generated quantities` blocks for the
+#' standard Stan idiom that materialises a correlation matrix from a
+#' `cholesky_factor_corr` parameter: `<name> = multiply_lower_tri_self_
+#' transpose(<L name>);` (with an optional leading type/size declaration).
+#' Returns a named list keyed by `<L name>`, valued `<name>` - used both to
+#' build `parse_lkj_priors()`'s prior rows and, by `Create_df_priors()`, to
+#' keep `parse_parameters_block()` from separately flagging `<name>` as an
+#' "unsupported type" (`corr_matrix`) when it's declared inside
+#' `transformed parameters` rather than `generated quantities`.
+#' @keywords internal
+find_lkj_corr_map <- function(transformed_parameters_block, generated_quantities_block) {
+  gq_code <- paste(
+    c(if (!is.na(transformed_parameters_block)) transformed_parameters_block,
+      if (!is.na(generated_quantities_block)) generated_quantities_block),
+    collapse = "\n"
+  )
+  gq_statements <- trimws(gsub("\\s+", " ", strsplit(gq_code, ";")[[1]]))
+  gq_statements <- gq_statements[gq_statements != ""]
+
+  corr_pattern <- paste0(
+    "(?:^[A-Za-z_][A-Za-z0-9_]*(?:<[^>]*>)?\\s*\\[[^\\]]*\\]\\s+)?",
+    "([A-Za-z_][A-Za-z0-9_]*)\\s*=\\s*multiply_lower_tri_self_transpose",
+    "\\s*\\(\\s*([A-Za-z_][A-Za-z0-9_]*)\\s*\\)"
+  )
+
+  corr_map <- list()
+  for (stmt in gq_statements) {
+    m <- regmatches(stmt, regexec(corr_pattern, stmt, perl = TRUE))[[1]]
+    if (length(m) == 0) next
+    corr_map[[m[3]]] <- m[2]
+  }
+  corr_map
+}
+
+#' Turn `cholesky_factor_corr[K] L; ... L ~ lkj_corr_cholesky(eta);` into
+#' one prior row per pairwise correlation.
+#'
+#' @description
+#' Unlike every other supported parameter type, the raw elements of a
+#' `cholesky_factor_corr[K]` parameter are not individually meaningful:
+#' `L[1,1]` is a hard-coded constant 1, and (for `K > 2`) the remaining
+#' entries are components of a spherical/stick-breaking parameterisation,
+#' not correlations themselves. The quantities worth plotting are the
+#' off-diagonal entries of the correlation matrix `R = L %*% t(L)`, each
+#' individually bounded in `(-1, 1)` and following a shifted-Beta marginal
+#' distribution under `L ~ lkj_corr_cholesky(eta)` - see `?lkjcorr1`.
+#'
+#' `R` itself has to come from somewhere in the *posterior*, though - a
+#' `cholesky_factor_corr[K]` Stan parameter's own draws are `L`, not `R`.
+#' This looks for the standard Stan idiom for materialising `R` from `L`:
+#' `corr_matrix[K] Corr_L = multiply_lower_tri_self_transpose(L);` (an
+#' optional leading type/size declaration, in case `Corr_L` was already
+#' declared elsewhere and only assigned here), in the `transformed
+#' parameters` or `generated quantities` block. If a matching statement is
+#' found, one prior row is emitted per pairwise correlation, named to
+#' match that generated quantity's own draws (e.g. `"Corr_L[1,2]"`) so it
+#' flows through `PriorPosteriorPlotStan()`'s existing matrix-element
+#' machinery unchanged - `Corr_L` is just an ordinary `matrix[K,K]`-shaped
+#' generated quantity as far as the rest of the package is concerned. If
+#' no matching statement is found, a warning suggests one to add (skipped
+#' entirely, not warned about, for any `L` not in `pars_filter`).
+#'
+#' Only searches the `transformed parameters`/`generated quantities`
+#' blocks, and only recognises that one idiom - a correlation matrix
+#' declared in the `parameters` block instead of computed from `L`, or
+#' materialised via some other expression (e.g. a manual `L * L'`), is not
+#' detected.
+#' @keywords internal
+parse_lkj_priors <- function(parameters_block, model_block,
+                              transformed_parameters_block,
+                              generated_quantities_block,
+                              data_list, pars_filter) {
+
+  # ---- find cholesky_factor_corr[K] name(s) ------------------------------
+  statements <- strsplit(parameters_block, ";")[[1]]
+  statements <- trimws(gsub("\\s+", " ", statements))
+  statements <- statements[statements != ""]
+
+  l_names <- character(0)
+  l_sizes <- list()
+
+  for (stmt in statements) {
+    m <- regmatches(stmt, regexec(
+      "^cholesky_factor_corr\\s*\\[\\s*([^\\]]+)\\s*\\]\\s+(.+)$", stmt,
+      perl = TRUE))[[1]]
+    if (length(m) == 0) next
+
+    size_expr <- trimws(m[2])
+    names_str <- sub("=.*$", "", m[3])
+    k_val <- resolve_numeric(size_expr, data_list)
+    if (is.na(k_val)) {
+      warning(
+        "Could not resolve size '", size_expr, "' for cholesky_factor_corr ",
+        "parameter(s) '", trimws(names_str), "'; pass its value via ",
+        "'data_list' if it's a data-block constant. Skipping its ",
+        "pairwise-correlation prior(s)."
+      )
+      next
+    }
+    k_val <- as.integer(round(k_val))
+
+    for (nm in trimws(strsplit(names_str, ",")[[1]])) {
+      if (!grepl("^[A-Za-z_][A-Za-z0-9_]*$", nm)) next
+      l_names <- c(l_names, nm)
+      l_sizes[[nm]] <- k_val
+    }
+  }
+
+  if (length(l_names) == 0) return(NULL)
+
+  # ---- find each L's lkj_corr_cholesky(eta) sampling statement -----------
+  lkj_priors <- parse_priors_block(model_block, l_names)
+
+  # ---- auto-detect each L's companion correlation-matrix statement -------
+  corr_map <- find_lkj_corr_map(transformed_parameters_block, generated_quantities_block)
+
+  # ---- assemble one row per pairwise correlation -------------------------
+  rows <- list()
+
+  for (l_name in l_names) {
+    prior_entry <- lkj_priors[[l_name]]
+    if (is.null(prior_entry)) next  # no sampling statement found; no prior
+
+    if (prior_entry$dist_stan != "lkj_corr_cholesky") {
+      warning(
+        "Unsupported prior distribution '", prior_entry$dist_stan,
+        "' for cholesky_factor_corr parameter '", l_name, "'; only ",
+        "lkj_corr_cholesky(eta) is currently supported. Skipping."
+      )
+      next
+    }
+
+    eta   <- resolve_numeric(prior_entry$args[1], data_list, l_name)
+    k_val <- l_sizes[[l_name]]
+    corr_name <- corr_map[[l_name]]
+
+    if (is.null(corr_name)) {
+      if (is.null(pars_filter) || l_name %in% pars_filter) {
+        suggested <- if (grepl("^L_", l_name)) sub("^L_", "Corr_", l_name) else paste0("Corr_", l_name)
+        warning(
+          "'", l_name, "' has an lkj_corr_cholesky(", eta, ") prior, but no ",
+          "generated quantity of the form '<name> = ",
+          "multiply_lower_tri_self_transpose(", l_name, ")' was found in the ",
+          "Stan code, so its pairwise correlation(s) can't be matched to ",
+          "posterior draws and will be skipped. Add a line such as:\n    ",
+          "corr_matrix[", k_val, "] ", suggested,
+          " = multiply_lower_tri_self_transpose(", l_name, ");\n",
+          "to your model's 'transformed parameters' or 'generated quantities' ",
+          "block to enable this check."
+        )
+      }
+      next
+    }
+
+    if (!(is.null(pars_filter) || corr_name %in% pars_filter || l_name %in% pars_filter)) next
+
+    for (i in seq_len(k_val - 1)) {
+      for (j in seq(i + 1, k_val)) {
+        rows[[length(rows) + 1]] <- data.frame(
+          par   = paste0(corr_name, "[", i, ",", j, "]"),
+          v_min = -1, v_max = 1, v_lwr = -1, v_upr = 1,
+          dist  = "lkj_corr", arg1 = eta, arg2 = k_val,
+          stringsAsFactors = FALSE
+        )
+      }
+    }
+  }
+
+  if (length(rows) == 0) return(NULL)
+  do.call(rbind, rows)
+}
+
 #' Map of supported Stan distribution names to the internal `dist` labels
 #' used by PriorPosteriorPlotStan(), and how many arguments each needs.
 #' @keywords internal
@@ -941,6 +1200,7 @@ quantile_fn <- function(dist, p, arg1, arg2) {
     uniform     = stats::qunif(p, min = arg1, max = arg2),
     laplace     = qlaplace(p, mu = arg1, b = arg2),
     beta        = stats::qbeta(p, shape1 = arg1, shape2 = arg2),
+    lkj_corr    = qlkjcorr1(p, eta = arg1, K = arg2),
     NA_real_
   )
 }
@@ -1026,6 +1286,21 @@ quantile_fn <- function(dist, p, arg1, arg2) {
 #' available either, \code{v_min}/\code{v_max} are left as NA and should
 #' be filled in manually before plotting.
 #'
+#' A \code{cholesky_factor_corr[K]} parameter \code{L} with an
+#' \code{L ~ lkj_corr_cholesky(eta);} prior is handled differently from
+#' every other type: its own raw elements aren't individually meaningful
+#' (see \code{?lkjcorr1}), so instead of a row for \code{L} itself, one row
+#' is emitted per pairwise correlation - \code{K*(K-1)/2} of them - each
+#' with \code{dist = "lkj_corr"}, \code{v_lwr}/\code{v_upr} = -1/1, and
+#' named to match a companion correlation-matrix generated quantity
+#' (\code{corr_matrix[K] Corr_L = multiply_lower_tri_self_transpose(L);}),
+#' auto-detected from the \code{transformed parameters}/
+#' \code{generated quantities} block. If \code{L} has an
+#' \code{lkj_corr_cholesky()} prior but no such generated quantity is
+#' found, a warning suggests the exact line to add; nothing is plotted for
+#' it in the meantime, since Stan itself never samples anything on the
+#' interpretable correlation scale in that case.
+#'
 #' @export
 #'
 #' @examples
@@ -1101,6 +1376,7 @@ Create_df_priors <- function(stan_code, data_list = NULL, pars = NULL) {
   parameters_block             <- extract_block(code, "parameters")
   transformed_parameters_block <- extract_block(code, "transformed parameters")
   model_block                  <- extract_block(code, "model")
+  generated_quantities_block   <- extract_block(code, "generated quantities")
 
   if (is.na(parameters_block)) {
     stop("Could not find a 'parameters' block in the supplied Stan code.")
@@ -1114,11 +1390,20 @@ Create_df_priors <- function(stan_code, data_list = NULL, pars = NULL) {
   }
 
   # ---- parameters + hard bounds -------------------------------------------
-  df_params <- parse_parameters_block(parameters_block, data_list, pars_filter)
+  # Computed up front (not just inside parse_lkj_priors(), later) so a
+  # corr_matrix[K] generated quantity living in 'transformed parameters'
+  # rather than 'generated quantities' doesn't ALSO get flagged as an
+  # "unsupported type" by the ordinary parse_parameters_block() calls below
+  # - it's already accounted for, just via parse_lkj_priors()'s own pass.
+  lkj_corr_names <- unname(unlist(
+    find_lkj_corr_map(transformed_parameters_block, generated_quantities_block)
+  ))
+
+  df_params <- parse_parameters_block(parameters_block, data_list, pars_filter, lkj_corr_names)
 
   if (!is.na(transformed_parameters_block)) {
     df_tp <- tryCatch(
-      parse_parameters_block(transformed_parameters_block, data_list, pars_filter),
+      parse_parameters_block(transformed_parameters_block, data_list, pars_filter, lkj_corr_names),
       error = function(e) NULL  # e.g. transformed parameters block has no
     )                           # supported declarations, only statements
     if (!is.null(df_tp)) {
@@ -1219,6 +1504,27 @@ Create_df_priors <- function(stan_code, data_list = NULL, pars = NULL) {
   })
 
   df_priors <- do.call(rbind, rows)
+
+  # ---- lkj_corr_cholesky() parameters: one row per pairwise correlation --
+  # A completely separate pass from the assembly loop above - see
+  # parse_lkj_priors()'s own documentation for why a cholesky_factor_corr
+  # parameter can't be handled the same way as every other type.
+  df_lkj <- parse_lkj_priors(
+    parameters_block, model_block, transformed_parameters_block,
+    generated_quantities_block, data_list, pars_filter
+  )
+  if (!is.null(df_lkj)) {
+    df_priors <- rbind(df_priors, df_lkj)
+  }
+
+  if (is.null(df_priors) || nrow(df_priors) == 0) {
+    stop(
+      "No supported parameters ('real', 'vector', 'matrix', or ",
+      "'cholesky_factor_corr' with a matching correlation-matrix generated ",
+      "quantity) were found in the supplied Stan code."
+    )
+  }
+
   rownames(df_priors) <- NULL
 
   tibble::as_tibble(df_priors)

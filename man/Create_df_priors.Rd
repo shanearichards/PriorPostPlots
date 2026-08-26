@@ -85,6 +85,21 @@ the 2.5\% / 97.5\% quantile of its prior distribution (i.e. the range
 encompassing the central 95\% of the distribution). If no prior is
 available either, \code{v_min}/\code{v_max} are left as NA and should
 be filled in manually before plotting.
+
+A \code{cholesky_factor_corr[K]} parameter \code{L} with an
+\code{L ~ lkj_corr_cholesky(eta);} prior is handled differently from
+every other type: its own raw elements aren't individually meaningful
+(see \code{?lkjcorr1}), so instead of a row for \code{L} itself, one row
+is emitted per pairwise correlation - \code{K*(K-1)/2} of them - each
+with \code{dist = "lkj_corr"}, \code{v_lwr}/\code{v_upr} = -1/1, and
+named to match a companion correlation-matrix generated quantity
+(\code{corr_matrix[K] Corr_L = multiply_lower_tri_self_transpose(L);}),
+auto-detected from the \code{transformed parameters}/
+\code{generated quantities} block. If \code{L} has an
+\code{lkj_corr_cholesky()} prior but no such generated quantity is
+found, a warning suggests the exact line to add; nothing is plotted for
+it in the meantime, since Stan itself never samples anything on the
+interpretable correlation scale in that case.
 }
 \examples{
 \dontrun{

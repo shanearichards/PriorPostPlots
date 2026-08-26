@@ -11,7 +11,7 @@ PriorPosteriorPlotStan(stan_fit, pars, df_priors, ncol = NA, nbins = 25)
 
 \item{pars}{A vector of parameter names associated with the stan model for plotting. Entries may be exact \code{df_priors$par} values (e.g. a scalar parameter, or an already bracket-indexed element like \code{"etaR[1]"}), or the \emph{base} name of a vector/matrix parameter (e.g. \code{"etaR"}, \code{"beta_genus"}), which expands to all of that parameter's elements as they appear in \code{df_priors} (e.g. \code{"etaR[1]"}, \code{"etaR[2]"}, \code{"etaR[3]"}) -- so elements don't need to be listed individually.}
 
-\item{df_priors}{A data frame containing information that describes the prior for each parameter. The data frame must have the columns par, dist, arg1, arg2, v_min, v_max, v_lwr, v_upr. par = parameter name, dist = prior distribution (normal, log_normal, exponential, gamma, uniform, laplace, beta), arg1 = first distribution parameter, arg2 = second distribution parameter (NA if not needed), v_min and v_max are the bounds of the plotted prior, v_lwr and v_upr are the stan-imposed parameter bounds (NA if none are set).}
+\item{df_priors}{A data frame containing information that describes the prior for each parameter. The data frame must have the columns par, dist, arg1, arg2, v_min, v_max, v_lwr, v_upr. par = parameter name, dist = prior distribution (normal, log_normal, exponential, gamma, uniform, laplace, beta, lkj_corr), arg1 = first distribution parameter, arg2 = second distribution parameter (NA if not needed; for lkj_corr, arg1 is eta and arg2 is K, the correlation matrix's dimension - see ?lkjcorr1), v_min and v_max are the bounds of the plotted prior, v_lwr and v_upr are the stan-imposed parameter bounds (NA if none are set).}
 
 \item{ncol}{Number of columns provided to facet_wrap. Square arrangement is produced when no value is provided.}
 
@@ -25,7 +25,10 @@ Generates a ggplot comparing prior and posterior distributions by combining samp
 }
 \details{
 Currently, the distributions allowed are uniform, normal, log_normal, exponential,
-gamma, laplace and beta. See corresponding d-functions for arguments required.
+gamma, laplace, beta, and lkj_corr (the marginal distribution of a single pairwise
+correlation under an lkj_corr_cholesky() prior - see ?lkjcorr1 and
+Create_df_priors()'s own documentation for how these rows get built). See
+corresponding d-functions for arguments required.
 Laplace has two arguments, the mean (mu) and the decay rate (b), and is described by
 exp(-abs(x - mu) / b) / (2 * b).
 }

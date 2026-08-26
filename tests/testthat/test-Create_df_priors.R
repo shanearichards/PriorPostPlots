@@ -145,10 +145,11 @@ test_that("split_args_respecting_parens() doesn't split inside a nested call", {
 # Regression test for a real usability issue found 2026-08-26: calling
 # Create_df_priors() (directly, or via PriorPosteriorPlot()) on a real
 # hierarchical model with a `pars` subset still warned about every OTHER
-# parameter in the model - unsupported types (e.g. cholesky_factor_corr),
-# unsupported prior families (e.g. std_normal) on random-effect z-scores -
-# none of which the caller ever asked to plot. The `pars` argument now lets
-# Create_df_priors() skip anything not requested, silently.
+# parameter in the model - an lkj_corr_cholesky() parameter with no
+# matching correlation-matrix generated quantity, unsupported prior
+# families (e.g. std_normal) on random-effect z-scores - none of which the
+# caller ever asked to plot. The `pars` argument now lets Create_df_priors()
+# skip anything not requested, silently.
 stan_code_mixed <- "
   parameters {
     real<lower=0.01> epsilon;
@@ -157,6 +158,7 @@ stan_code_mixed <- "
   }
   model {
     epsilon ~ normal(0, 0.15);
+    L_block ~ lkj_corr_cholesky(4);
     z_block ~ std_normal();
   }
 "
@@ -165,11 +167,12 @@ test_that("without a `pars` filter, every parameter is parsed and warned about a
   expect_warning(
     expect_warning(
       df <- Create_df_priors(stan_code_mixed),
-      "unsupported type"
+      "multiply_lower_tri_self_transpose"
     ),
     "Unsupported prior distribution"
   )
   expect_true(all(c("epsilon", "z_block[1]", "z_block[2]") %in% df$par))
+  expect_false(any(grepl("^L_block|^Corr_block", df$par)))
 })
 
 test_that("with a `pars` filter, unrequested parameters generate no warning and are excluded", {
