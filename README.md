@@ -22,16 +22,28 @@ if (!requireNamespace("remotes", quietly = TRUE)) install.packages("remotes")
 remotes::install_github("shanearichards/PriorPostPlots")
 ```
 
-Troubleshooting: if RStudio's Help pane shows "Internal Server Error" or a topic is missing after installation, it usually means the installed help database was not built correctly. A simple fix is to restart R, remove the package, and reinstall forcing a rebuild of the package (this regenerates the help database):
+## Troubleshooting
+
+**RStudio's Help pane shows "Internal Server Error", or a topic is missing, after installing.**
+This isn't specific to `PriorPostPlots` — it's a general RStudio/R quirk: RStudio caches a
+help-topics index and runs a local help server, and reinstalling *any* package over a version
+already loaded in that same live R session can leave that cache stale. It's most likely to show up
+if you `remotes::install_github()` over a version of the package you'd already `library()`-loaded
+earlier in the session. (As of v0.0.3, every `.Rd` file passes `tools::checkRd()` and `R CMD
+check`'s documentation checks cleanly, so a genuinely malformed help page shipped with the package
+is unlikely to be the cause.)
+
+The fix is the same either way — restart R, then remove and reinstall forcing a rebuild:
 
 ```r
-# restart R session (recommended)
+# restart R session (recommended, e.g. Session > Restart R in RStudio)
 remove.packages("PriorPostPlots")
 if (!requireNamespace("remotes", quietly = TRUE)) install.packages("remotes")
 remotes::install_github("shanearichards/PriorPostPlots", dependencies = TRUE, force = TRUE, build = TRUE)
 ```
 
-As a quick temporary workaround you can view any raw Rd directly from the repository and render it locally without reinstalling, for example:
+As a quick temporary workaround you can view any raw Rd directly from the repository and render it
+locally without reinstalling, for example:
 
 ```r
 tmp_rd <- tempfile(fileext = ".Rd")
