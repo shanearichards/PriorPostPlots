@@ -382,12 +382,41 @@ PriorPosteriorPlotStan <- function(stan_fit, pars, df_priors, ncol = NA, nbins =
   # to the union of its own [v_min, v_max] and its observed posterior
   # range.
   #
+  # Widening to the raw draws' own min/max is not quite enough on its own:
+  # geom_histogram()'s bin edges routinely extend past the raw data (its
+  # default bin placement is not anchored to the data's exact min/max), so
+  # a bin can still peek out past a ribbon that only reaches the raw
+  # min/max. Precompute the histogram bars ourselves - from the posterior
+  # draws ALONE, with no ribbon layer present - and widen to their actual
+  # bin edges instead.
+  #
+  # This precomputation has to happen before the ribbon is drawn, and the
+  # final plot below has to render these same precomputed bars (via
+  # geom_rect(), not a second live geom_histogram() call) rather than
+  # letting ggplot2 recompute the histogram itself. With
+  # facet_wrap(scales = "free"), stat_bin()'s automatic bin-width
+  # calculation reads each panel's fully-trained x-scale, which is the
+  # union of every layer sharing that panel - so a live geom_histogram()
+  # sitting alongside the ribbon would have its own bin edges pulled wider
+  # by the very ribbon we widened to match it, which pulls the ribbon
+  # wider still on the next look, and so on (confirmed empirically against
+  # a real model: re-deriving bin edges from a two-layer probe grew them
+  # on every iteration instead of settling down). Precomputing the bars
+  # from a posterior-only probe and drawing them as static geom_rect() data
+  # removes that feedback loop entirely, since nothing about the ribbon can
+  # feed back into a computation that already happened.
+  #
   # A genuine Stan hard bound (v_lwr/v_upr) is a different matter: a valid
   # posterior draw can never legitimately fall outside one (Stan's own
-  # constraining transform enforces it), so if that happens here it means
-  # something is actually wrong (e.g. df_priors has the wrong bound
-  # attached to this parameter) rather than merely a too-narrow display
-  # window - flag it instead of silently widening past it.
+  # constraining transform enforces it), so if the RAW DRAWS do, something
+  # is actually wrong (e.g. df_priors has the wrong bound attached to this
+  # parameter) - flag it rather than silently widening past it. A
+  # HISTOGRAM BIN edge, on the other hand, can extend past a true bound
+  # purely as a placement artifact with no real draws actually out there
+  # (stat_bin() has no notion of the parameter's valid support), so the
+  # widened range is re-clamped to any true bound afterwards rather than
+  # visually implying the parameter's support extends past where it really
+  # can.
   post_range <- df_posteriors_plot |>
     dplyr::summarise(
       post_min = min(.data$val, na.rm = TRUE),
@@ -395,13 +424,27 @@ PriorPosteriorPlotStan <- function(stan_fit, pars, df_priors, ncol = NA, nbins =
       .by = "par"
     )
 
+  hist_probe <- ggplot2::ggplot_build(
+    ggplot2::ggplot(df_posteriors_plot, ggplot2::aes(x = .data$val)) +
+      ggplot2::geom_histogram(bins = nbins) +
+      ggplot2::facet_wrap(ggplot2::vars(par), scales = "free")
+  )
+  df_bins_plot <- dplyr::left_join(
+    hist_probe$data[[1]], hist_probe$layout$layout, by = "PANEL"
+  )
+  bin_range <- df_bins_plot |>
+    dplyr::summarise(bin_min = min(.data$xmin), bin_max = max(.data$xmax), .by = "par")
+
   df_priors_use <- df_priors_use |>
     dplyr::left_join(post_range, by = "par") |>
+    dplyr::left_join(bin_range, by = "par") |>
     dplyr::mutate(
       out_of_bounds = (!is.na(.data$true_v_lwr) & .data$post_min < .data$true_v_lwr) |
         (!is.na(.data$true_v_upr) & .data$post_max > .data$true_v_upr),
-      v_min = pmin(.data$v_min, .data$post_min, na.rm = TRUE),
-      v_max = pmax(.data$v_max, .data$post_max, na.rm = TRUE)
+      v_min = pmin(.data$v_min, .data$bin_min, na.rm = TRUE),
+      v_max = pmax(.data$v_max, .data$bin_max, na.rm = TRUE),
+      v_min = dplyr::if_else(!is.na(.data$true_v_lwr), pmax(.data$v_min, .data$true_v_lwr), .data$v_min),
+      v_max = dplyr::if_else(!is.na(.data$true_v_upr), pmin(.data$v_max, .data$true_v_upr), .data$v_max)
     )
 
   if (any(df_priors_use$out_of_bounds, na.rm = TRUE)) {
@@ -413,8 +456,26 @@ PriorPosteriorPlotStan <- function(stan_fit, pars, df_priors, ncol = NA, nbins =
       "to the right parameter."
     )
   }
+
+  # The bars themselves need the same true-bound clamp as the ribbon just
+  # got, and for the same reason: a bin edge dipping past a true hard bound
+  # is stat_bin()'s placement artifact, not a real draw out there, so the
+  # bar shouldn't visually claim support past it either - otherwise the
+  # ribbon and the bar would each be clamped to a *different* edge right at
+  # the boundary, leaving a sliver of bar poking out with no ribbon under
+  # it (the one situation the widening above doesn't otherwise reach).
+  df_bins_plot <- df_bins_plot |>
+    dplyr::left_join(
+      dplyr::select(df_priors_use, "par", "true_v_lwr", "true_v_upr"), by = "par"
+    ) |>
+    dplyr::mutate(
+      xmin = dplyr::if_else(!is.na(.data$true_v_lwr), pmax(.data$xmin, .data$true_v_lwr), .data$xmin),
+      xmax = dplyr::if_else(!is.na(.data$true_v_upr), pmin(.data$xmax, .data$true_v_upr), .data$xmax)
+    )
+
   df_priors_use <- dplyr::select(
-    df_priors_use, -"post_min", -"post_max", -"out_of_bounds", -"true_v_lwr", -"true_v_upr"
+    df_priors_use,
+    -"post_min", -"post_max", -"bin_min", -"bin_max", -"out_of_bounds", -"true_v_lwr", -"true_v_upr"
   )
 
   # generate data for prior distribution curves in long format
@@ -423,11 +484,16 @@ PriorPosteriorPlotStan <- function(stan_fit, pars, df_priors, ncol = NA, nbins =
   # set the number of facet columns
   ncol <- ifelse(is.na(ncol), ceiling(0.5*length(pars_use)), ncol)
 
+  # df_bins_plot$par came off hist_probe's own facet layout, so it needs
+  # the same factor levels as df_priors_plot/df_posteriors_plot to facet
+  # into matching, correctly-ordered panels below.
+  df_bins_plot$par <- factor(df_bins_plot$par, levels = pars_use)
+
   ggplot2::ggplot() +
     ggplot2::geom_ribbon(data = df_priors_plot,
       ggplot2::aes(x = .data$x, ymin = 0, ymax = .data$y), fill = "salmon") +
-    ggplot2::geom_histogram(data = df_posteriors_plot,
-      ggplot2::aes(x = .data$val, y = ggplot2::after_stat(.data$density)), bins = nbins,
+    ggplot2::geom_rect(data = df_bins_plot,
+      ggplot2::aes(xmin = .data$xmin, xmax = .data$xmax, ymin = 0, ymax = .data$density),
       fill = "grey85", color = "black") +
     ggplot2::facet_wrap(ggplot2::vars(par), scales = "free", ncol = ncol) +
     ggplot2::theme_bw() +
