@@ -164,12 +164,96 @@ PriorCurves <- function(df_param) {
   return(df_curves)
 }
 
+#' Extract posterior draws from a fitted Stan model into the same
+#' shape `rstan::extract()` produces - a named list with one entry per
+#' base parameter: a plain vector for a scalar parameter, an
+#' `iterations x J` matrix for a `vector[J]` parameter, or an
+#' `iterations x R x C` array for a `matrix[R, C]` parameter.
+#'
+#' Two input types are handled: an `rstan::sampling()`/`rstan::stan()`
+#' fit (class `"stanfit"`) is passed straight to `rstan::extract()`,
+#' unchanged from previous versions of this package. Anything else with
+#' a `$draws(variables = ..., format = "matrix")` method - which
+#' includes every `cmdstanr` fit class (`CmdStanMCMC`, and more broadly
+#' `CmdStanFit`) without `cmdstanr` needing to be an explicit dependency
+#' of this package - has its `draws_matrix` output (column names
+#' `"name"`/`"name[i]"`/`"name[i,j]"`, one column per scalar element)
+#' reshaped into the same vector/matrix/array-per-parameter list
+#' structure by hand, since `cmdstanr` has no equivalent of
+#' `rstan::extract()`'s automatic per-parameter reshaping.
+#' @keywords internal
+extract_posterior_list <- function(stan_fit, base_pars) {
+  if (inherits(stan_fit, "stanfit")) {
+    return(rstan::extract(object = stan_fit, pars = base_pars))
+  }
+
+  has_draws_method <- tryCatch(is.function(stan_fit$draws), error = function(e) FALSE)
+  if (!has_draws_method) {
+    stop(
+      "'stan_fit' must be an object of class 'stanfit' (from rstan::sampling()/",
+      "rstan::stan()), or a cmdstanr fit object (or similar) with a '$draws()' ",
+      "method (e.g. from cmdstanr::cmdstan_model()$sample()) -- got an object ",
+      "of class: ", paste(class(stan_fit), collapse = "/"), "."
+    )
+  }
+
+  draws_mat <- tryCatch(
+    stan_fit$draws(variables = base_pars, format = "matrix"),
+    error = function(e) {
+      stop(
+        "Failed to extract draws for parameter(s) '",
+        paste(base_pars, collapse = "', '"), "' from 'stan_fit' via its ",
+        "$draws() method: ", conditionMessage(e)
+      )
+    }
+  )
+  # Strip any draws_matrix/draws S3 classing immediately -- indexing such
+  # an object is not always equivalent to indexing a plain matrix (e.g. it
+  # can carry extra required attributes/metadata), and all that's needed
+  # from here on is a plain numeric matrix with parameter names as columns.
+  draws_mat <- matrix(as.numeric(draws_mat), nrow = nrow(draws_mat),
+                       dimnames = list(NULL, colnames(draws_mat)))
+
+  col_names <- colnames(draws_mat)
+  n_iter <- nrow(draws_mat)
+  out <- list()
+
+  for (p in base_pars) {
+    cols <- col_names[col_names == p | grepl(paste0("^", p, "\\["), col_names, perl = TRUE)]
+    if (length(cols) == 0) next  # not present in this fit; silently omitted,
+
+    if (length(cols) == 1 && cols == p) {
+      out[[p]] <- as.numeric(draws_mat[, p])
+      next
+    }
+
+    # "name[i]" (vector) or "name[i,j]" (matrix) columns - recover each
+    # element's index/indices from its column name, matching how
+    # parse_parameters_block() (Create_df_priors.R) names them.
+    idx_strs <- sub(paste0("^", p, "\\[(.*)\\]$"), "\\1", cols)
+
+    if (any(grepl(",", idx_strs, fixed = TRUE))) {
+      idx <- do.call(rbind, lapply(strsplit(idx_strs, ",", fixed = TRUE), as.integer))
+      arr <- array(NA_real_, dim = c(n_iter, max(idx[, 1]), max(idx[, 2])))
+      for (k in seq_along(cols)) arr[, idx[k, 1], idx[k, 2]] <- draws_mat[, cols[k]]
+      out[[p]] <- arr
+    } else {
+      idx <- as.integer(idx_strs)
+      m <- matrix(NA_real_, nrow = n_iter, ncol = max(idx))
+      for (k in seq_along(cols)) m[, idx[k]] <- draws_mat[, cols[k]]
+      out[[p]] <- m
+    }
+  }
+
+  out
+}
+
 #' Generates prior-posterior plots
 #'
 #' @description
 #' Generates a ggplot comparing prior and posterior distributions by combining sampling output from a Stan model with a data frame specifying the prior distributions for selected model parameters.
 #'
-#' @param stan_fit An object returned by rstan::sampling.
+#' @param stan_fit A fitted Stan model: either an object returned by \code{rstan::sampling()}/\code{rstan::stan()} (class \code{"stanfit"}), or a \code{cmdstanr} fit object (e.g. from \code{cmdstanr::cmdstan_model()$sample()}, class \code{"CmdStanMCMC"}/\code{"CmdStanFit"}) or anything else exposing the same \code{$draws(variables = ..., format = "matrix")} method. See \code{extract_posterior_list()} for exactly how each is handled.
 #' @param pars A vector of parameter names associated with the stan model for plotting. Entries may be exact \code{df_priors$par} values (e.g. a scalar parameter, or an already bracket-indexed element like \code{"etaR[1]"}), or the *base* name of a vector/matrix parameter (e.g. \code{"etaR"}, \code{"beta_genus"}), which expands to all of that parameter's elements as they appear in \code{df_priors} (e.g. \code{"etaR[1]"}, \code{"etaR[2]"}, \code{"etaR[3]"}) -- so elements don't need to be listed individually.
 #' @param df_priors A data frame containing information that describes the prior for each parameter. The data frame must have the columns par, dist, arg1, arg2, v_min, v_max, v_lwr, v_upr. par = parameter name, dist = prior distribution (normal, log_normal, exponential, gamma, uniform, laplace, beta), arg1 = first distribution parameter, arg2 = second distribution parameter (NA if not needed), v_min and v_max are the bounds of the plotted prior, v_lwr and v_upr are the stan-imposed parameter bounds (NA if none are set).
 #' @param ncol Number of columns provided to facet_wrap. Square arrangement is produced when no value is provided.
@@ -199,14 +283,13 @@ PriorCurves <- function(df_param) {
 #'   arg1  = c(  0,  0.5,    2,  1.5,   0,   0,   2), # distribution argument 1
 #'   arg2  = c(  3,   NA,  0.5,  1.0, 0.5,  10,   3)  # distribution argument 2
 #' )
-#' PriorPosteriorPlotStan(stan_fit, pars, df_priors) # produce the prior-post plot
+#' PriorPosteriorPlotStan(stan_fit, pars, df_priors) # rstan fit
+#'
+#' # equally, a cmdstanr fit works directly, no conversion needed:
+#' # fit <- cmdstanr::cmdstan_model("model.stan")$sample(data = stan_data)
+#' # PriorPosteriorPlotStan(fit, pars, df_priors)
 #' }
 PriorPosteriorPlotStan <- function(stan_fit, pars, df_priors, ncol = NA, nbins = 25) {
-  # check validy of stan_fit
-	if (!inherits(stan_fit, "stanfit")) {
-    stop("Error: 'stan_fit' argument must be an object of class 'stanfit'.")
-  }
-
 	# check validity of ncol
   if (!is.na(ncol) && (!is.numeric(ncol) || ncol %% 1 != 0 || ncol <= 0)) {
     stop("Error: 'ncol' must be NA or a positive integer.")
@@ -257,21 +340,82 @@ PriorPosteriorPlotStan <- function(stan_fit, pars, df_priors, ncol = NA, nbins =
   }
 
   df_priors_use$par <- factor(df_priors_use$par, levels = pars_use)
+
+  # Record which parameters have a GENUINE Stan hard bound before the
+  # fallback below overwrites any NA with v_min/v_max (needed so
+  # PriorCurves() can renormalize an unbounded density's display window as
+  # if it were "bounded" there, for its own truncated-density integral) -
+  # that fallback makes "real bound" vs. "just the display window"
+  # indistinguishable from v_lwr/v_upr alone afterwards, but the later
+  # widening step below needs exactly that distinction.
+  df_priors_use$true_v_lwr <- df_priors_use$v_lwr
+  df_priors_use$true_v_upr <- df_priors_use$v_upr
+
 	df_priors_use$v_lwr <- pmax(df_priors_use$v_min, df_priors_use$v_lwr, na.rm=TRUE)
 	df_priors_use$v_upr <- pmin(df_priors_use$v_max, df_priors_use$v_upr, na.rm=TRUE)
 
   # extract posterior samples and place in long format
-  # rstan::extract() only accepts base parameter names (e.g. "beta"),
-  # not bracket-indexed names (e.g. "beta[1]") -- strip any "[...]"
-  # suffix before requesting from rstan; LongParameters() re-expands
-  # any resulting matrix-valued entries back into "name[i]" columns.
+  # rstan::extract()/extract_posterior_list() only accept base parameter
+  # names (e.g. "beta"), not bracket-indexed names (e.g. "beta[1]") --
+  # strip any "[...]" suffix before requesting the draws; LongParameters()
+  # re-expands any resulting matrix-valued entries back into "name[i]"
+  # columns.
   base_pars <- unique(sub("\\[.*\\]$", "", pars_use))
-  l_posteriors <- rstan::extract(object = stan_fit, pars = base_pars)
+  l_posteriors <- extract_posterior_list(stan_fit, base_pars)
   df_posteriors_plot <- LongParameters(l_posteriors, pars_use)
 
   if (!(nrow(df_posteriors_plot) > 0)) { # at least 1 parameter is present
     stop("Error: missing prior information")
   }
+
+  # ---- widen the display range to also cover the actual posterior draws --
+  # v_min/v_max are derived purely from the PRIOR (a hard Stan bound if one
+  # exists, else the prior's own 2.5%/97.5% quantile - see
+  # Create_df_priors()) and know nothing about where the posterior actually
+  # landed. Since the whole point of this plot is to show the data pulling
+  # the posterior away from the prior, the posterior routinely extends
+  # beyond that illustrative window - and PriorCurves() draws the ribbon
+  # only across [v_min, v_max], so without this adjustment the histogram
+  # would show bars past the edge of the ribbon with no prior shading
+  # there at all, looking like the posterior violated a bound it never
+  # actually violated. Widen (never narrow) each parameter's display range
+  # to the union of its own [v_min, v_max] and its observed posterior
+  # range.
+  #
+  # A genuine Stan hard bound (v_lwr/v_upr) is a different matter: a valid
+  # posterior draw can never legitimately fall outside one (Stan's own
+  # constraining transform enforces it), so if that happens here it means
+  # something is actually wrong (e.g. df_priors has the wrong bound
+  # attached to this parameter) rather than merely a too-narrow display
+  # window - flag it instead of silently widening past it.
+  post_range <- df_posteriors_plot |>
+    dplyr::summarise(
+      post_min = min(.data$val, na.rm = TRUE),
+      post_max = max(.data$val, na.rm = TRUE),
+      .by = "par"
+    )
+
+  df_priors_use <- df_priors_use |>
+    dplyr::left_join(post_range, by = "par") |>
+    dplyr::mutate(
+      out_of_bounds = (!is.na(.data$true_v_lwr) & .data$post_min < .data$true_v_lwr) |
+        (!is.na(.data$true_v_upr) & .data$post_max > .data$true_v_upr),
+      v_min = pmin(.data$v_min, .data$post_min, na.rm = TRUE),
+      v_max = pmax(.data$v_max, .data$post_max, na.rm = TRUE)
+    )
+
+  if (any(df_priors_use$out_of_bounds, na.rm = TRUE)) {
+    warning(
+      "Posterior draws fall outside the hard bound(s) recorded in 'df_priors' ",
+      "for: '", paste(df_priors_use$par[df_priors_use$out_of_bounds], collapse = "', '"),
+      "' - this should not be possible for a genuine Stan <lower=, upper=> ",
+      "constraint, so double-check df_priors has the right bounds attached ",
+      "to the right parameter."
+    )
+  }
+  df_priors_use <- dplyr::select(
+    df_priors_use, -"post_min", -"post_max", -"out_of_bounds", -"true_v_lwr", -"true_v_upr"
+  )
 
   # generate data for prior distribution curves in long format
   df_priors_plot <- PriorCurves(df_priors_use)
@@ -973,9 +1117,12 @@ Create_df_priors <- function(stan_code, data_list = NULL) {
 #' the supplied Stan code and immediately produces the prior-posterior plot,
 #' so there is no need to call \code{Create_df_priors()} separately first.
 #'
-#' @param stan_fit An object returned by rstan::sampling. This supplies the
-#'   posterior samples; it is distinct from \code{stan_code}, which supplies
-#'   the parameter bounds and priors and does not itself contain samples.
+#' @param stan_fit A fitted Stan model: either an object returned by
+#'   \code{rstan::sampling()}/\code{rstan::stan()}, or a \code{cmdstanr} fit
+#'   object (or anything else exposing a \code{$draws()} method - see
+#'   \code{extract_posterior_list()}). This supplies the posterior samples;
+#'   it is distinct from \code{stan_code}, which supplies the parameter
+#'   bounds and priors and does not itself contain samples.
 #' @param stan_code A file path to a .stan file, a character string/vector
 #'   containing Stan code, or a compiled \code{stanmodel} object. See
 #'   \code{Create_df_priors()} for details on what is parsed from this.

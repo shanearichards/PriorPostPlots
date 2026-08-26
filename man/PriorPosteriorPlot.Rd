@@ -14,9 +14,12 @@ PriorPosteriorPlot(
 )
 }
 \arguments{
-\item{stan_fit}{An object returned by rstan::sampling. This supplies the
-posterior samples; it is distinct from \code{stan_code}, which supplies
-the parameter bounds and priors and does not itself contain samples.}
+\item{stan_fit}{A fitted Stan model: either an object returned by
+\code{rstan::sampling()}/\code{rstan::stan()}, or a \code{cmdstanr} fit
+object (or anything else exposing a \code{$draws()} method - see
+\code{extract_posterior_list()}). This supplies the posterior samples;
+it is distinct from \code{stan_code}, which supplies the parameter
+bounds and priors and does not itself contain samples.}
 
 \item{stan_code}{A file path to a .stan file, a character string/vector
 containing Stan code, or a compiled \code{stanmodel} object. See

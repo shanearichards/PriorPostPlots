@@ -7,7 +7,7 @@
 PriorPosteriorPlotStan(stan_fit, pars, df_priors, ncol = NA, nbins = 25)
 }
 \arguments{
-\item{stan_fit}{An object returned by rstan::sampling.}
+\item{stan_fit}{A fitted Stan model: either an object returned by \code{rstan::sampling()}/\code{rstan::stan()} (class \code{"stanfit"}), or a \code{cmdstanr} fit object (e.g. from \code{cmdstanr::cmdstan_model()$sample()}, class \code{"CmdStanMCMC"}/\code{"CmdStanFit"}) or anything else exposing the same \code{$draws(variables = ..., format = "matrix")} method. See \code{extract_posterior_list()} for exactly how each is handled.}
 
 \item{pars}{A vector of parameter names associated with the stan model for plotting. Entries may be exact \code{df_priors$par} values (e.g. a scalar parameter, or an already bracket-indexed element like \code{"etaR[1]"}), or the \emph{base} name of a vector/matrix parameter (e.g. \code{"etaR"}, \code{"beta_genus"}), which expands to all of that parameter's elements as they appear in \code{df_priors} (e.g. \code{"etaR[1]"}, \code{"etaR[2]"}, \code{"etaR[3]"}) -- so elements don't need to be listed individually.}
 
@@ -44,6 +44,10 @@ df_priors <- data.frame(
   arg1  = c(  0,  0.5,    2,  1.5,   0,   0,   2), # distribution argument 1
   arg2  = c(  3,   NA,  0.5,  1.0, 0.5,  10,   3)  # distribution argument 2
 )
-PriorPosteriorPlotStan(stan_fit, pars, df_priors) # produce the prior-post plot
+PriorPosteriorPlotStan(stan_fit, pars, df_priors) # rstan fit
+
+# equally, a cmdstanr fit works directly, no conversion needed:
+# fit <- cmdstanr::cmdstan_model("model.stan")$sample(data = stan_data)
+# PriorPosteriorPlotStan(fit, pars, df_priors)
 }
 }
